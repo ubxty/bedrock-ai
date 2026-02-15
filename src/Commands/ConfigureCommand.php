@@ -1,0 +1,222 @@
+<?php
+
+namespace Ubxty\BedrockAi\Commands;
+
+use Illuminate\Console\Command;
+use Ubxty\BedrockAi\BedrockManager;
+
+class ConfigureCommand extends Command
+{
+    protected $signature = 'bedrock:configure
+                            {--test : Test the connection after configuring}
+                            {--show : Show current configuration (masked secrets)}';
+
+    protected $description = 'Interactive wizard to configure AWS Bedrock credentials';
+
+    public function handle(BedrockManager $manager): int
+    {
+        if ($this->option('show')) {
+            return $this->showConfig($manager);
+        }
+
+        $this->info('');
+        $this->info('  ╔═══════════════════════════════════════════╗');
+        $this->info('  ║   AWS Bedrock Configuration Wizard        ║');
+        $this->info('  ╚═══════════════════════════════════════════╝');
+        $this->info('');
+
+        // Step 1: AWS Key
+        $this->info('  Step 1: AWS Credentials');
+        $this->line('  ─────────────────────────────────────────────');
+        $this->line('  Enter your AWS Access Key ID or ABSK Bearer Token.');
+        $this->line('  (ABSK tokens use HTTP mode; standard keys use AWS SDK)');
+        $this->newLine();
+
+        $awsKey = $this->ask('AWS Access Key ID / Bearer Token');
+        $awsSecret = $this->secret('AWS Secret Access Key (hidden)');
+        $region = $this->ask('AWS Region', 'us-east-1');
+        $label = $this->ask('Key Label (for identification)', 'Primary');
+
+        // Detect mode
+        $isHttp = str_starts_with($awsKey, 'ABSK') || str_starts_with($awsSecret, 'ABSK');
+        $this->newLine();
+        $this->info('  Mode: ' . ($isHttp ? 'HTTP Bearer Token (ABSK)' : 'AWS SDK (IAM)'));
+
+        // Step 2: Pricing API (optional)
+        $this->newLine();
+        $this->info('  Step 2: Pricing API (Optional)');
+        $this->line('  ─────────────────────────────────────────────');
+        $this->line('  Separate credentials for fetching real-time pricing.');
+        $this->line('  Skip to use the same credentials as above.');
+        $this->newLine();
+
+        $pricingKey = '';
+        $pricingSecret = '';
+        if ($this->confirm('Configure separate Pricing API credentials?', false)) {
+            $pricingKey = $this->ask('Pricing API Key');
+            $pricingSecret = $this->secret('Pricing API Secret (hidden)');
+        }
+
+        // Step 3: Show summary
+        $this->newLine();
+        $this->info('  Configuration Summary');
+        $this->line('  ─────────────────────────────────────────────');
+        $this->table(
+            ['Setting', 'Value'],
+            [
+                ['Label', $label],
+                ['AWS Key', $this->maskSecret($awsKey)],
+                ['Region', $region],
+                ['Mode', $isHttp ? 'HTTP Bearer' : 'AWS SDK'],
+                ['Pricing API', $pricingKey ? $this->maskSecret($pricingKey) : 'Same as above'],
+            ]
+        );
+
+        // Step 4: Generate .env entries
+        $this->newLine();
+        $this->info('  Add these to your .env file:');
+        $this->line('  ─────────────────────────────────────────────');
+        $this->newLine();
+        $this->line("  BEDROCK_KEY_LABEL={$label}");
+        $this->line("  BEDROCK_AWS_KEY={$awsKey}");
+        $this->line("  BEDROCK_AWS_SECRET={$awsSecret}");
+        $this->line("  BEDROCK_REGION={$region}");
+
+        if ($pricingKey) {
+            $this->line("  BEDROCK_PRICING_KEY={$pricingKey}");
+            $this->line("  BEDROCK_PRICING_SECRET={$pricingSecret}");
+        }
+
+        // Step 5: Write to .env
+        $this->newLine();
+        if ($this->confirm('Write these to your .env file automatically?', true)) {
+            $this->writeEnv([
+                'BEDROCK_KEY_LABEL' => $label,
+                'BEDROCK_AWS_KEY' => $awsKey,
+                'BEDROCK_AWS_SECRET' => $awsSecret,
+                'BEDROCK_REGION' => $region,
+                'BEDROCK_PRICING_KEY' => $pricingKey,
+                'BEDROCK_PRICING_SECRET' => $pricingSecret,
+            ]);
+
+            $this->info('  ✓ .env file updated.');
+            $this->line('  Run `php artisan config:clear` to reload configuration.');
+        }
+
+        // Step 6: Test connection
+        if ($this->option('test') || $this->confirm('Test connection now?', true)) {
+            $this->newLine();
+            $this->info('  Testing connection...');
+
+            // Build a temporary manager with the new credentials
+            $testConfig = [
+                'default' => 'default',
+                'connections' => [
+                    'default' => [
+                        'keys' => [[
+                            'label' => $label,
+                            'aws_key' => $awsKey,
+                            'aws_secret' => $awsSecret,
+                            'region' => $region,
+                        ]],
+                    ],
+                ],
+                'retry' => config('bedrock.retry', []),
+                'defaults' => config('bedrock.defaults', []),
+            ];
+
+            $testManager = new BedrockManager($testConfig);
+            $result = $testManager->testConnection();
+
+            if ($result['success']) {
+                $this->info('  ✓ ' . $result['message']);
+                $this->info("  Response time: {$result['response_time']}ms");
+            } else {
+                $this->error('  ✗ Connection failed: ' . $result['message']);
+
+                return 1;
+            }
+        }
+
+        $this->newLine();
+        $this->info('  ✓ Configuration complete!');
+        $this->newLine();
+
+        return 0;
+    }
+
+    protected function showConfig(BedrockManager $manager): int
+    {
+        $config = $manager->getConfig();
+
+        $this->info('');
+        $this->info('  Current Bedrock Configuration');
+        $this->line('  ─────────────────────────────────────────────');
+        $this->newLine();
+
+        $this->info("  Default Connection: " . ($config['default'] ?? 'default'));
+        $this->info("  Configured: " . ($manager->isConfigured() ? 'Yes' : 'No'));
+        $this->newLine();
+
+        foreach ($config['connections'] ?? [] as $name => $connection) {
+            $this->info("  Connection: {$name}");
+            foreach ($connection['keys'] ?? [] as $i => $key) {
+                $this->table(
+                    ['Setting', 'Value'],
+                    [
+                        ['Label', $key['label'] ?? 'Key ' . ($i + 1)],
+                        ['AWS Key', $this->maskSecret($key['aws_key'] ?? '')],
+                        ['Region', $key['region'] ?? 'us-east-1'],
+                        ['Mode', str_starts_with($key['aws_key'] ?? '', 'ABSK') ? 'HTTP Bearer' : 'AWS SDK'],
+                    ]
+                );
+            }
+        }
+
+        $this->info('  Retry: max ' . ($config['retry']['max_retries'] ?? 3) . ', base delay ' . ($config['retry']['base_delay'] ?? 2) . 's');
+
+        $limits = $config['limits'] ?? [];
+        $this->info('  Daily limit: ' . ($limits['daily'] ? '$' . $limits['daily'] : 'None'));
+        $this->info('  Monthly limit: ' . ($limits['monthly'] ? '$' . $limits['monthly'] : 'None'));
+        $this->newLine();
+
+        return 0;
+    }
+
+    protected function maskSecret(string $value): string
+    {
+        if (strlen($value) <= 8) {
+            return str_repeat('*', strlen($value));
+        }
+
+        return substr($value, 0, 4) . str_repeat('*', strlen($value) - 8) . substr($value, -4);
+    }
+
+    protected function writeEnv(array $values): void
+    {
+        $envPath = base_path('.env');
+
+        if (! file_exists($envPath)) {
+            return;
+        }
+
+        $envContent = file_get_contents($envPath);
+
+        foreach ($values as $key => $value) {
+            if (empty($value)) {
+                continue;
+            }
+
+            // Escape value if it contains spaces
+            $escapedValue = str_contains($value, ' ') ? '"' . $value . '"' : $value;
+
+            if (preg_match("/^{$key}=/m", $envContent)) {
+                $envContent = preg_replace("/^{$key}=.*/m", "{$key}={$escapedValue}", $envContent);
+            } else {
+                $envContent .= "\n{$key}={$escapedValue}";
+            }
+        }
+
+        file_put_contents($envPath, $envContent);
+    }
+}
