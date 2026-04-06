@@ -346,6 +346,11 @@ class ChatCommand extends Command
                 $result['latency_ms'] ?? 0,
             ));
         } catch (\Exception $e) {
+            // Roll back the failed multimodal message
+            $messages = $conversation->getMessages();
+            array_pop($messages);
+            $conversation->reset()->setMessages($messages);
+
             $this->error('  Error: ' . $e->getMessage());
         }
     }
