@@ -93,18 +93,57 @@ class ConverseClient
     /**
      * Format messages into Converse API format.
      *
-     * @param array<int, array{role: string, content: string}> $messages
+     * Supports both plain-text messages (`content` is a string) and multimodal
+     * messages (`content` is an array of typed blocks: text, image, document).
+     *
+     * @param array<int, array{role: string, content: string|array}> $messages
+     * @param bool $httpMode When true, image/document bytes are kept as base64 strings
+     *                       (HTTP/JSON API). When false they are decoded to raw binary
+     *                       for the AWS PHP SDK.
      * @return array<int, array{role: string, content: array}>
      */
-    protected function formatMessages(array $messages): array
+    protected function formatMessages(array $messages, bool $httpMode = false): array
     {
-        return array_map(function (array $msg) {
-            return [
-                'role' => $msg['role'],
-                'content' => [
-                    ['text' => $msg['content']],
-                ],
-            ];
+        return array_map(function (array $msg) use ($httpMode) {
+            $content = $msg['content'];
+
+            // Plain text message — backward-compatible fast path
+            if (is_string($content)) {
+                return [
+                    'role' => $msg['role'],
+                    'content' => [['text' => $content]],
+                ];
+            }
+
+            // Multimodal content blocks
+            $blocks = [];
+            foreach ($content as $block) {
+                $type = $block['type'] ?? 'text';
+
+                if ($type === 'text') {
+                    $blocks[] = ['text' => $block['text']];
+                } elseif ($type === 'image') {
+                    // HTTP API expects base64 strings; SDK expects raw binary
+                    $bytes = $httpMode ? $block['data'] : base64_decode($block['data']);
+                    $blocks[] = [
+                        'image' => [
+                            'format' => $block['format'],
+                            'source' => ['bytes' => $bytes],
+                        ],
+                    ];
+                } elseif ($type === 'document') {
+                    $bytes = $httpMode ? $block['data'] : base64_decode($block['data']);
+                    $blocks[] = [
+                        'document' => [
+                            'format' => $block['format'],
+                            'name'   => $block['name'] ?? 'document',
+                            'source' => ['bytes' => $bytes],
+                        ],
+                    ];
+                }
+            }
+
+            return ['role' => $msg['role'], 'content' => $blocks];
         }, $messages);
     }
 
@@ -129,7 +168,7 @@ class ConverseClient
         $url = "https://bedrock-runtime.{$region}.amazonaws.com/model/{$modelId}/converse";
 
         $body = [
-            'messages' => $this->formatMessages($messages),
+            'messages' => $this->formatMessages($messages, true),
             'inferenceConfig' => [
                 'maxTokens' => $maxTokens,
                 'temperature' => $temperature,

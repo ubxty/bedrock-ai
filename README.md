@@ -28,6 +28,7 @@ A Laravel package for seamless **AWS Bedrock** integration. Provides multi-key c
   - [Invoking Models](#invoking-models)
   - [Model Aliases](#model-aliases)
   - [Conversation Builder](#conversation-builder)
+  - [Vision & Multimodal](#vision--multimodal-images-and-documents)
   - [Converse API](#converse-api)
   - [Streaming Responses](#streaming-responses)
   - [Token Estimation](#token-estimation)
@@ -72,6 +73,7 @@ A Laravel package for seamless **AWS Bedrock** integration. Provides multi-key c
 | **Titan + Claude support** | Handles different request/response formats transparently |
 | **Converse API** | Unified AWS Converse API across all model providers |
 | **Streaming** | Real-time token streaming via `converseStream` (all providers) |
+| **Vision & multimodal** | Send images and documents (PDF, CSV, DOCX…) alongside text prompts |
 | **Conversation Builder** | Fluent multi-turn conversation API with chaining |
 | **Model Aliases** | Define short names for model IDs (e.g., `'claude'` → full model ID) |
 | **Token Estimation** | Pre-call token count and cost estimation |
@@ -383,6 +385,83 @@ echo "Estimated cost: \${$estimate['estimated_cost']}";
 // Reset conversation (keeps system prompt and settings)
 $conversation->reset();
 ```
+
+### Vision & Multimodal (Images and Documents)
+
+Send images and documents alongside text prompts using `userWithImage()` and `userWithDocument()` on the `ConversationBuilder`. Any model that lists `[img]` or `[pdf]` in `php artisan bedrock:models` supports these inputs (e.g. Claude 3+, Amazon Nova Pro/Lite).
+
+#### Sending an Image
+
+```php
+$result = Bedrock::conversation('amazon.nova-pro-v1:0')
+    ->system('You are a helpful assistant.')
+    ->userWithImage(
+        prompt: 'Describe what you see in this image.',
+        source: '/absolute/path/to/image.png',   // file path OR base64 string
+        format: 'auto'                            // jpeg, png, gif, webp — or 'auto' to detect from extension
+    )
+    ->send();
+
+echo $result['response'];
+// e.g. "The image shows a house with a red roof, blue walls, and a gray door."
+```
+
+Passing already-encoded base64 data works too:
+
+```php
+$base64 = base64_encode(file_get_contents($imagePath));
+
+$result = Bedrock::conversation('amazon.nova-pro-v1:0')
+    ->userWithImage('What brand logo is this?', $base64, 'png')
+    ->send();
+```
+
+#### Sending a Document (PDF, CSV, DOCX…)
+
+```php
+$result = Bedrock::conversation('anthropic.claude-sonnet-4-20250514-v1:0')
+    ->userWithDocument(
+        prompt: 'Summarise the key findings of this report.',
+        source: '/absolute/path/to/report.pdf',
+        format: 'auto',       // pdf, csv, doc, docx, xls, xlsx, html, txt, md — or 'auto'
+        name:   'Q1 Report'   // optional display name shown to the model
+    )
+    ->send();
+
+echo $result['response'];
+```
+
+#### Multi-turn with Images
+
+Send the image once and follow up with plain text — the model retains the image in conversation context:
+
+```php
+$conversation = Bedrock::conversation('amazon.nova-pro-v1:0')
+    ->system('You are an expert visual analyst.');
+
+// Turn 1: include the image
+$r1 = $conversation
+    ->userWithImage('What colours are dominant in this image?', '/path/to/image.png')
+    ->send();
+
+echo $r1['response'];  // e.g. "Blue, red, and grey are dominant…"
+
+// Turn 2: plain text follow-up — no need to re-send the image
+$r2 = $conversation
+    ->user('What real-world object do those colours remind you of?')
+    ->send();
+
+echo $r2['response'];
+```
+
+#### Available Formats
+
+| Type | Accepted formats |
+|---|---|
+| Image | `jpeg`, `png`, `gif`, `webp` |
+| Document | `pdf`, `csv`, `doc`, `docx`, `xls`, `xlsx`, `html`, `txt`, `md` |
+
+> **Check model support:** run `php artisan bedrock:models` — the `Accepts` column shows `img` and/or `pdf` for compatible models. Passing an image to a text-only model will return an error.
 
 ### Converse API
 

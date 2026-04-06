@@ -6,6 +6,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and 
 
 ---
 
+## [0.0.10] - 2026-04-06
+
+### Added
+
+- **Vision & multimodal support** — New `userWithImage()` and `userWithDocument()` methods on `ConversationBuilder` let you send images (JPEG, PNG, GIF, WebP) and documents (PDF, CSV, DOCX, XLSX, TXT, HTML, MD) alongside a text prompt. Models that support these input types (Claude 3+, Amazon Nova Pro/Lite, etc.) will analyse the content and respond. Accepts a file path or a pre-encoded base64 string. Multi-turn conversations work — send the image in the first turn and follow up with plain text in subsequent turns.
+
+### Fixed
+
+- **Bearer token: cross-region inference profile prefix removed** — `ConverseClient` was prepending `us./eu.` prefixes to model IDs (e.g. `amazon.nova-pro-v1:0` → `us.amazon.nova-pro-v1:0`) in bearer token mode. These prefixes are required for IAM/SigV4 but cause 403 Authentication failures on bearer endpoints. The original model ID is now passed directly to `converseHttp()`.
+- **Error message decodes AWS `Message` key (capital M)** — `BedrockClient::extractUserFriendlyError()` now reads `$decoded['Message']` as a fallback, so the raw JSON blob no longer leaks into error messages.
+- **Friendly error for invalid/expired bearer tokens** — A 403 response containing "Authentication failed" or "API Key is valid" now returns a human-readable message: *"Bearer token is invalid or expired. Regenerate your API key in the AWS Console."*
+- **`estimate()` handles multimodal messages** — `ConversationBuilder::estimate()` now extracts only text blocks when calculating token estimates, avoiding a fatal error when array content blocks are present.
+
+---
+
 ## [0.0.9] - 2026-04-06
 
 ### Changed

@@ -51,6 +51,78 @@ class ConversationBuilder
     }
 
     /**
+     * Add a user message with an image attachment.
+     *
+     * Models that support image input (e.g. Claude 3+, Nova Pro, Nova Lite) will
+     * analyse the image and answer the prompt.
+     *
+     * @param  string  $prompt   The question or instruction about the image.
+     * @param  string  $source   Absolute file path or already base64-encoded image data.
+     * @param  string  $format   Image format: jpeg, png, gif, webp.
+     *                           'auto' detects from the file extension.
+     */
+    public function userWithImage(string $prompt, string $source, string $format = 'auto'): static
+    {
+        $base64 = is_file($source) ? base64_encode(file_get_contents($source)) : $source;
+
+        if ($format === 'auto') {
+            $ext    = strtolower(pathinfo($source, PATHINFO_EXTENSION));
+            $format = match ($ext) {
+                'jpg', 'jpeg' => 'jpeg',
+                'png'         => 'png',
+                'gif'         => 'gif',
+                'webp'        => 'webp',
+                default       => 'jpeg',
+            };
+        }
+
+        $this->messages[] = [
+            'role'    => 'user',
+            'content' => [
+                ['type' => 'image', 'format' => $format, 'data' => $base64],
+                ['type' => 'text',  'text'   => $prompt],
+            ],
+        ];
+
+        return $this;
+    }
+
+    /**
+     * Add a user message with a document attachment (e.g. PDF, CSV, DOCX).
+     *
+     * Models that support document input will read the document and answer the prompt.
+     *
+     * @param  string  $prompt   The question or instruction about the document.
+     * @param  string  $source   Absolute file path or already base64-encoded document data.
+     * @param  string  $format   Document format: pdf, csv, doc, docx, xls, xlsx, html, txt, md.
+     *                           'auto' detects from the file extension.
+     * @param  string  $name     Display name for the document (defaults to the filename).
+     */
+    public function userWithDocument(string $prompt, string $source, string $format = 'auto', string $name = ''): static
+    {
+        $base64 = is_file($source) ? base64_encode(file_get_contents($source)) : $source;
+
+        if ($format === 'auto') {
+            $ext    = strtolower(pathinfo($source, PATHINFO_EXTENSION));
+            $format = $ext ?: 'pdf';
+        }
+
+        if ($name === '' && is_file($source)) {
+            $name = pathinfo($source, PATHINFO_FILENAME);
+        }
+
+        $this->messages[] = [
+            'role'    => 'user',
+            'content' => [
+                ['type' => 'document', 'format' => $format, 'name' => $name ?: 'document', 'data' => $base64],
+                ['type' => 'text',     'text'   => $prompt],
+            ],
+        ];
+
+        return $this;
+    }
+
+    /**
      * Add an assistant message to the conversation (for multi-turn context).
      */
     public function assistant(string $message): static
@@ -109,7 +181,14 @@ class ConversationBuilder
      */
     public function estimate(): array
     {
-        $allContent = implode(' ', array_map(fn ($m) => $m['content'], $this->messages));
+        $allContent = implode(' ', array_map(function (array $m) {
+            $content = $m['content'];
+            if (is_string($content)) {
+                return $content;
+            }
+            // Extract only text blocks from multimodal messages for token estimation
+            return implode(' ', array_filter(array_map(fn ($b) => $b['text'] ?? null, $content)));
+        }, $this->messages));
 
         $estimation = TokenEstimator::estimateInvocation(
             $this->systemPrompt,
