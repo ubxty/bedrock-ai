@@ -9,3 +9,6 @@
 test_integration.php
 bugs.md
 BUGS2.MD
+bugs3.md
+tests/400.png
+tests/test_vision.php
