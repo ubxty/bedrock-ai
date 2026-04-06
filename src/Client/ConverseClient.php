@@ -40,6 +40,31 @@ class ConverseClient
         int $maxTokens = 4096,
         float $temperature = 0.7,
     ): array {
+        try {
+            return $this->doConverse($modelId, $messages, $systemPrompt, $maxTokens, $temperature);
+        } catch (BedrockException $e) {
+            // Some models (e.g. Mixtral, Mistral 7B) reject system messages.
+            // Automatically fold the system prompt into the first user message and retry.
+            if ($systemPrompt !== '' && str_contains($e->getMessage(), "doesn't support system")) {
+                $messages = $this->foldSystemIntoMessages($messages, $systemPrompt);
+
+                return $this->doConverse($modelId, $messages, '', $maxTokens, $temperature);
+            }
+
+            throw $e;
+        }
+    }
+
+    /**
+     * Internal: execute a converse call with retry logic.
+     */
+    protected function doConverse(
+        string $modelId,
+        array $messages,
+        string $systemPrompt,
+        int $maxTokens,
+        float $temperature,
+    ): array {
         $startTime = microtime(true);
 
         return $this->withRetry($modelId, function (string $resolvedModelId, array $key) use ($modelId, $messages, $systemPrompt, $maxTokens, $temperature, $startTime) {
@@ -91,6 +116,28 @@ class ConverseClient
     }
 
     // formatMessages() is inherited from HasRetryLogic trait.
+
+    /**
+     * Fold a system prompt into the first user message for models that don't support system messages.
+     */
+    protected function foldSystemIntoMessages(array $messages, string $systemPrompt): array
+    {
+        if (empty($messages)) {
+            return $messages;
+        }
+
+        $first = &$messages[0];
+        if ($first['role'] === 'user') {
+            if (is_string($first['content'])) {
+                $first['content'] = "[System: {$systemPrompt}]\n\n" . $first['content'];
+            } elseif (is_array($first['content'])) {
+                // Prepend as a text block for multimodal messages
+                array_unshift($first['content'], ['type' => 'text', 'text' => "[System: {$systemPrompt}]"]);
+            }
+        }
+
+        return $messages;
+    }
 
     /**
      * Send a conversation via HTTP Bearer mode.
