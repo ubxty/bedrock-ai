@@ -84,9 +84,28 @@ class DefaultModelCommand extends Command
         }
 
         if (empty($grouped)) {
-            $this->warn('  No models found.');
+            $this->warn('  No models found in the local database.');
+            $this->line('  <fg=gray>This usually means models have not been synced yet.</>\n');
 
-            return $this->ask('  Enter model ID manually');
+            if ($this->confirm('  Sync models from AWS now?', true)) {
+                $this->line('  Syncing...');
+                try {
+                    $count = $manager->syncModels($connection);
+                    if ($count > 0) {
+                        $this->info("  ✓ Synced {$count} models.");
+                        $grouped = $manager->getModelsGrouped($connection);
+                    } else {
+                        $this->warn('  Sync returned 0 models (bearer tokens cannot access the model listing endpoint).');
+                        $this->line('  <fg=gray>Enter the model ID manually instead — e.g. amazon.nova-lite-v1:0</>');
+                    }
+                } catch (\Throwable $e) {
+                    $this->error('  Sync failed: ' . $e->getMessage());
+                }
+            }
+
+            if (empty($grouped)) {
+                return $this->ask('  Enter model ID manually');
+            }
         }
 
         $totalModels = array_sum(array_map('count', $grouped));
