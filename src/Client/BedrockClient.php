@@ -88,7 +88,7 @@ class BedrockClient
 
             $msg = count($models) > 0
                 ? 'Connection successful! Found ' . count($models) . ' available models.'
-                : 'Connection configured. Bearer token active (model listing requires IAM permissions — run `bedrock:models --sync` with IAM to populate the model list).';
+                : 'Bearer token accepted (model listing requires IAM — token validity not verified here; use `bedrock:test` → test a model to confirm).';
 
             return [
                 'success' => true,
@@ -282,9 +282,12 @@ class BedrockClient
         if (preg_match('/Bedrock HTTP Error: (\d+) - (.+)$/', $errorMessage, $matches)) {
             $statusCode = $matches[1];
             $decoded = json_decode($matches[2], true);
-            $message = $decoded['message'] ?? $matches[2];
+            // AWS returns both 'message' and 'Message' depending on the service path
+            $message = $decoded['message'] ?? $decoded['Message'] ?? $matches[2];
 
             $friendlyMessages = [
+                'Authentication failed' => 'Bearer token is invalid or expired. Regenerate your API key in the AWS Console.',
+                'API Key is valid' => 'Bearer token is invalid or expired. Regenerate your API key in the AWS Console.',
                 'model identifier is invalid' => 'Invalid model: This model ID is not valid for Bedrock.',
                 "doesn't support on-demand throughput" => 'Model unavailable: This model requires provisioned throughput.',
                 "isn't supported" => 'Model unavailable: This model requires an inference profile.',
