@@ -58,8 +58,8 @@ class DefaultModelCommand extends Command
         $this->newLine();
 
         // Ask which type(s) to configure
-        $setChat  = ! $currentChat  || $this->confirm('  Update default <options=bold>chat</> model?',  ! $currentChat);
-        $setImage = ! $currentImage || $this->confirm('  Update default <options=bold>image</> model?', ! $currentImage);
+        $setChat  = $this->confirm('  Set/update default <options=bold>chat</> model?',  true);
+        $setImage = $this->confirm('  Set/update default <options=bold>image</> model?', false);
 
         if (! $setChat && ! $setImage) {
             $this->line('  Nothing to update.');

@@ -38,7 +38,20 @@ class ChatCommand extends Command
         $modelId = $this->argument('model');
 
         if (! $modelId) {
-            $modelId = $this->selectModel($manager, $connection);
+            $defaultModel = $manager->defaultModel();
+
+            if ($defaultModel) {
+                $this->line("  Default model: <fg=cyan>{$defaultModel}</>");
+                $useDefault = $this->confirm('  Use default model?', true);
+
+                if ($useDefault) {
+                    $modelId = $defaultModel;
+                } else {
+                    $modelId = $this->selectModel($manager, $connection);
+                }
+            } else {
+                $modelId = $this->selectModel($manager, $connection);
+            }
 
             if (! $modelId) {
                 return 1;
@@ -190,26 +203,27 @@ class ChatCommand extends Command
         $this->info('Fetching available models...');
 
         try {
-            $models = $manager->fetchModels($connection);
+            $grouped = $manager->getModelsGrouped($connection, 'chat');
         } catch (\Exception $e) {
             $this->error('Failed to fetch models: ' . $e->getMessage());
 
             return null;
         }
 
-        if (empty($models)) {
+        if (empty($grouped)) {
             $this->error('No models available.');
 
             return null;
         }
 
-        // Filter to text-capable active models
-        $textModels = array_values(array_filter($models, function ($m) {
-            return $m['is_active'] && in_array('text', $m['capabilities']);
+        // Flatten grouped models and filter to text-capable active models
+        $allModels = array_merge(...array_values($grouped));
+        $textModels = array_values(array_filter($allModels, function ($m) {
+            return $m['is_active'] && in_array('text', $m['capabilities'] ?? []);
         }));
 
         if (empty($textModels)) {
-            $textModels = $models;
+            $textModels = $allModels;
         }
 
         // Show a compact numbered list
