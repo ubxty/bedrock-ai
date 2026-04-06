@@ -125,6 +125,7 @@ return [
         'temperature' => 0.7,
         'anthropic_version' => 'bedrock-2023-05-31',
         'model' => env('BEDROCK_DEFAULT_MODEL', ''),
+        'image_model' => env('BEDROCK_DEFAULT_IMAGE_MODEL', ''),
     ],
 
     /*

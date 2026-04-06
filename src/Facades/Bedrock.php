@@ -27,6 +27,7 @@ use Ubxty\BedrockAi\BedrockManager;
  * @method static int syncModels(?string $connection = null)
  * @method static array<string, array> getModelsGrouped(?string $connection = null)
  * @method static string defaultModel()
+ * @method static string defaultImageModel()
  *
  * @see \Ubxty\BedrockAi\BedrockManager
  */

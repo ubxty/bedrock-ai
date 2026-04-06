@@ -324,11 +324,19 @@ class BedrockManager
     }
 
     /**
-     * Get the configured default model ID (from BEDROCK_DEFAULT_MODEL env).
+     * Get the configured default chat model ID (from BEDROCK_DEFAULT_MODEL env).
      */
     public function defaultModel(): string
     {
         return $this->config['defaults']['model'] ?? '';
+    }
+
+    /**
+     * Get the configured default image model ID (from BEDROCK_DEFAULT_IMAGE_MODEL env).
+     */
+    public function defaultImageModel(): string
+    {
+        return $this->config['defaults']['image_model'] ?? '';
     }
 
     /**

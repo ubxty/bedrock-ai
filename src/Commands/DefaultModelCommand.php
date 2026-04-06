@@ -7,12 +7,12 @@ use Ubxty\BedrockAi\BedrockManager;
 
 class DefaultModelCommand extends Command
 {
-    protected $signature = 'bedrock:model
-                            {--show    : Show the current default model}
-                            {--reset   : Clear the default model}
+    protected $signature = 'bedrock:default-model
+                            {--show    : Show current default models}
+                            {--reset   : Clear both default models}
                             {--connection= : Use a specific connection}';
 
-    protected $description = 'Set or show the default Bedrock model (writes BEDROCK_DEFAULT_MODEL to .env)';
+    protected $description = 'Set or show the default Bedrock chat and image models';
 
     public function handle(BedrockManager $manager): int
     {
@@ -20,20 +20,21 @@ class DefaultModelCommand extends Command
 
         // ── --show ────────────────────────────────────────────────
         if ($this->option('show')) {
-            $current = $manager->defaultModel();
-            if ($current) {
-                $this->info("  Current default model: <options=bold>{$current}</>");
-            } else {
-                $this->warn('  No default model set (BEDROCK_DEFAULT_MODEL is empty).');
-            }
+            $chat  = $manager->defaultModel();
+            $image = $manager->defaultImageModel();
+            $this->info('  Default Models');
+            $this->line('  ─────────────────────────────────────────────');
+            $this->line('  Chat  (BEDROCK_DEFAULT_MODEL):       ' . ($chat  ?: '<fg=yellow>not set</>'));
+            $this->line('  Image (BEDROCK_DEFAULT_IMAGE_MODEL): ' . ($image ?: '<fg=yellow>not set</>'));
+            $this->newLine();
 
             return self::SUCCESS;
         }
 
         // ── --reset ───────────────────────────────────────────────
         if ($this->option('reset')) {
-            $this->writeEnv(['BEDROCK_DEFAULT_MODEL' => '']);
-            $this->info('  Default model cleared.');
+            $this->writeEnv(['BEDROCK_DEFAULT_MODEL' => '', 'BEDROCK_DEFAULT_IMAGE_MODEL' => '']);
+            $this->info('  Default chat and image models cleared.');
 
             return self::SUCCESS;
         }
@@ -41,29 +42,48 @@ class DefaultModelCommand extends Command
         // ── Interactive picker ────────────────────────────────────
         $this->info('');
         $this->info('  ╔═══════════════════════════════════════════╗');
-        $this->info('  ║   Set Default Bedrock Model               ║');
+        $this->info('  ║   Set Default Bedrock Models              ║');
         $this->info('  ╚═══════════════════════════════════════════╝');
         $this->info('');
 
-        $current = $manager->defaultModel();
-        if ($current) {
-            $this->line("  Current default: <fg=cyan>{$current}</>");
-            $this->newLine();
+        // ── Chat model ────────────────────────────────────────────
+        $currentChat = $manager->defaultModel();
+        $this->line('  <options=bold>Step 1: Default Chat Model</>');
+        if ($currentChat) {
+            $this->line("  Current: <fg=cyan>{$currentChat}</>");
         }
+        $this->newLine();
 
-        $modelId = $this->pickModel($manager, $connection);
+        $chatModelId = $this->pickModel($manager, $connection);
 
-        if (! $modelId) {
-            $this->error('  No model selected. Aborting.');
+        if (! $chatModelId) {
+            $this->error('  No chat model selected. Aborting.');
 
             return self::FAILURE;
         }
 
-        $this->writeEnv(['BEDROCK_DEFAULT_MODEL' => $modelId]);
+        // ── Image model ───────────────────────────────────────────
+        $this->newLine();
+        $this->line('  <options=bold>Step 2: Default Image Model</>');
+        $currentImage = $manager->defaultImageModel();
+        if ($currentImage) {
+            $this->line("  Current: <fg=cyan>{$currentImage}</>");
+        }
+        $this->line('  <fg=gray>Only models with image-input capability are shown.</>');
+        $this->newLine();
+
+        $imageModelId = $this->pickModel($manager, $connection, 'image');
+
+        // ── Write env ─────────────────────────────────────────────
+        $this->writeEnv([
+            'BEDROCK_DEFAULT_MODEL'       => $chatModelId,
+            'BEDROCK_DEFAULT_IMAGE_MODEL' => $imageModelId ?? '',
+        ]);
 
         $this->newLine();
-        $this->info("  ✓ Default model set to: <options=bold>{$modelId}</>");
-        $this->line('  <fg=gray>BEDROCK_DEFAULT_MODEL has been written to your .env file.</>');
+        $this->info("  ✓ Default chat model:  <options=bold>{$chatModelId}</>");
+        $this->info('  ✓ Default image model: <options=bold>' . ($imageModelId ?: '(none)') . '</>');
+        $this->line('  <fg=gray>Written to your .env file.</>');
         $this->newLine();
 
         return self::SUCCESS;
@@ -71,7 +91,11 @@ class DefaultModelCommand extends Command
 
     // ─────────────────────────────────────────────────────────────────
 
-    protected function pickModel(BedrockManager $manager, ?string $connection): ?string
+    /**
+     * @param string|null $capability  Filter to models supporting this capability (e.g. 'image').
+     *                                 Pass null to show all models.
+     */
+    protected function pickModel(BedrockManager $manager, ?string $connection, ?string $capability = null): ?string
     {
         $this->line('  <options=bold>Fetching available models...</>');
 
@@ -105,6 +129,23 @@ class DefaultModelCommand extends Command
 
             if (empty($grouped)) {
                 return $this->ask('  Enter model ID manually');
+            }
+        }
+
+        // Filter by capability if requested
+        if ($capability !== null) {
+            foreach ($grouped as $provider => $models) {
+                $grouped[$provider] = array_values(
+                    array_filter($models, fn ($m) => in_array($capability, $m['capabilities'], true))
+                );
+            }
+            $grouped = array_filter($grouped, fn ($models) => ! empty($models));
+
+            if (empty($grouped)) {
+                $this->warn("  No models found with '{$capability}' capability.");
+                $this->line('  <fg=gray>You can enter a model ID manually or skip (leave blank).</>');
+
+                return $this->ask('  Enter model ID manually (or leave blank to skip)') ?: null;
             }
         }
 
