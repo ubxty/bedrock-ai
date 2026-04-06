@@ -23,6 +23,7 @@ use Ubxty\BedrockAi\BedrockManager;
  * @method static \Ubxty\BedrockAi\Client\ModelAliasResolver aliases()
  * @method static string resolveAlias(string $modelIdOrAlias)
  * @method static \Ubxty\BedrockAi\Logging\InvocationLogger getLogger()
+ * @method static bool isBearerMode(?string $connection = null)
  *
  * @see \Ubxty\BedrockAi\BedrockManager
  */

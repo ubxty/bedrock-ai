@@ -109,17 +109,18 @@ class ConversationBuilder
      */
     public function estimate(): array
     {
-        $fullInput = $this->buildFullInput();
+        $allContent = implode(' ', array_map(fn ($m) => $m['content'], $this->messages));
+
         $estimation = TokenEstimator::estimateInvocation(
             $this->systemPrompt,
-            $fullInput,
+            $allContent,
             $this->modelId,
             $this->maxTokens
         );
 
         $estimation['estimated_cost'] = TokenEstimator::estimateCost(
             $this->systemPrompt,
-            $fullInput,
+            $allContent,
             $this->maxTokens,
             $this->pricing
         );
@@ -128,22 +129,20 @@ class ConversationBuilder
     }
 
     /**
-     * Send the conversation and get a response.
+     * Send the conversation using the Converse API (proper multi-turn support).
      *
-     * @return array{response: string, input_tokens: int, output_tokens: int, total_tokens: int, cost: float, latency_ms: int, status: string, key_used: string, model_id: string}
+     * @return array{response: string, input_tokens: int, output_tokens: int, total_tokens: int, stop_reason: string, latency_ms: int, model_id: string, key_used: string}
      */
     public function send(): array
     {
-        $client = $this->manager->client($this->connection);
-        $fullInput = $this->buildFullInput();
+        $converseClient = $this->manager->converseClient($this->connection);
 
-        $result = $client->invoke(
+        $result = $converseClient->converse(
             $this->modelId,
+            $this->messages,
             $this->systemPrompt,
-            $fullInput,
             $this->maxTokens,
             $this->temperature,
-            $this->pricing
         );
 
         // Add assistant response to conversation history
@@ -179,6 +178,30 @@ class ConversationBuilder
     }
 
     /**
+     * Send the conversation with streaming output.
+     *
+     * @param callable(string $chunk): void $onChunk
+     * @return array{response: string, input_tokens: int, output_tokens: int, total_tokens: int, latency_ms: int, model_id: string}
+     */
+    public function sendStream(callable $onChunk): array
+    {
+        $streamingClient = $this->manager->streamingClient($this->connection);
+
+        $result = $streamingClient->converseStream(
+            $this->modelId,
+            $this->messages,
+            $onChunk,
+            $this->systemPrompt,
+            $this->maxTokens,
+            $this->temperature,
+        );
+
+        $this->messages[] = ['role' => 'assistant', 'content' => $result['response']];
+
+        return $result;
+    }
+
+    /**
      * Reset the conversation history (keeps system prompt and settings).
      */
     public function reset(): static
@@ -186,29 +209,5 @@ class ConversationBuilder
         $this->messages = [];
 
         return $this;
-    }
-
-    /**
-     * Build the full input string from multi-turn message history.
-     * The last user message is sent as the userMessage param;
-     * prior turns are prepended as context.
-     */
-    protected function buildFullInput(): string
-    {
-        if (empty($this->messages)) {
-            return '';
-        }
-
-        if (count($this->messages) === 1) {
-            return $this->messages[0]['content'];
-        }
-
-        $parts = [];
-        foreach ($this->messages as $msg) {
-            $role = ucfirst($msg['role']);
-            $parts[] = "{$role}: {$msg['content']}";
-        }
-
-        return implode("\n\n", $parts);
     }
 }

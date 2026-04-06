@@ -26,6 +26,7 @@ class BedrockAiServiceProvider extends ServiceProvider
             ], 'bedrock-config');
 
             $this->commands([
+                Commands\ChatCommand::class,
                 Commands\ConfigureCommand::class,
                 Commands\ModelsCommand::class,
                 Commands\TestCommand::class,

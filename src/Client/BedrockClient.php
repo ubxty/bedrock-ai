@@ -4,8 +4,11 @@ namespace Ubxty\BedrockAi\Client;
 
 use Aws\Bedrock\BedrockClient as AwsBedrockClient;
 use Aws\BedrockRuntime\BedrockRuntimeClient;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Ubxty\BedrockAi\Events\BedrockKeyRotated;
+use Ubxty\BedrockAi\Events\BedrockRateLimited;
 use Ubxty\BedrockAi\Exceptions\BedrockException;
 use Ubxty\BedrockAi\Exceptions\RateLimitException;
 use Ubxty\BedrockAi\Models\ModelSpecResolver;
@@ -21,6 +24,8 @@ class BedrockClient
     protected string $anthropicVersion;
 
     protected ?BedrockRuntimeClient $sdkClient = null;
+
+    protected int $modelsCacheTtl = 3600;
 
     public function __construct(
         CredentialManager $credentials,
@@ -61,7 +66,7 @@ class BedrockClient
                     $region = $key['region'] ?? 'us-east-1';
                     $resolvedModelId = InferenceProfileResolver::resolve($modelId, $region);
 
-                    if ($this->credentials->isHttpMode()) {
+                    if ($this->credentials->isBearerMode()) {
                         return $this->invokeHttp(
                             $resolvedModelId, $systemPrompt, $userMessage,
                             $maxTokens, $temperature, $startTime, $pricing
@@ -96,11 +101,30 @@ class BedrockClient
                             'error' => $errorMessage,
                             'key_label' => $key['label'] ?? 'Unknown',
                         ]);
+
+                        if (function_exists('event')) {
+                            event(new BedrockKeyRotated(
+                                fromKeyLabel: $key['label'] ?? 'Unknown',
+                                toKeyLabel: $this->credentials->current()['label'] ?? 'Unknown',
+                                reason: $errorMessage,
+                                modelId: $modelId,
+                            ));
+                        }
+
                         break;
                     }
 
                     // All keys exhausted
                     if ($isRateLimited) {
+                        if (function_exists('event')) {
+                            event(new BedrockRateLimited(
+                                modelId: $modelId,
+                                keyLabel: $key['label'] ?? 'Unknown',
+                                retryAttempt: $retryAttempt,
+                                waitSeconds: 0,
+                            ));
+                        }
+
                         throw new RateLimitException(
                             'AI service is temporarily busy. Please wait a moment and try again.',
                             429, $e, $modelId, $key['label'] ?? null
@@ -155,13 +179,27 @@ class BedrockClient
      */
     public function listModels(): array
     {
-        $key = $this->credentials->current();
+        return Cache::remember(
+            'bedrock_ai_models_' . md5(serialize($this->credentials->current())),
+            $this->modelsCacheTtl,
+            function () {
+                if ($this->credentials->isBearerMode()) {
+                    return $this->listModelsHttp();
+                }
 
-        if ($this->credentials->isHttpMode()) {
-            return $this->listModelsHttp();
-        }
+                return $this->listModelsSdk();
+            }
+        );
+    }
 
-        return $this->listModelsSdk();
+    /**
+     * Set the models cache TTL in seconds.
+     */
+    public function setModelsCacheTtl(int $ttl): static
+    {
+        $this->modelsCacheTtl = $ttl;
+
+        return $this;
     }
 
     /**
@@ -294,7 +332,7 @@ class BedrockClient
     {
         $key = $this->credentials->current();
         $region = $key['region'] ?? 'us-east-1';
-        $bearerToken = $this->credentials->getHttpBearerToken();
+        $bearerToken = $this->credentials->getBearerToken();
 
         $response = Http::withHeaders([
             'Authorization' => 'Bearer ' . $bearerToken,

@@ -31,8 +31,10 @@ return [
             'keys' => [
                 [
                     'label' => env('BEDROCK_KEY_LABEL', 'Primary'),
+                    'auth_mode' => env('BEDROCK_AUTH_MODE', 'iam'), // 'iam' or 'bearer'
                     'aws_key' => env('BEDROCK_AWS_KEY', env('AWS_ACCESS_KEY_ID', '')),
                     'aws_secret' => env('BEDROCK_AWS_SECRET', env('AWS_SECRET_ACCESS_KEY', '')),
+                    'bearer_token' => env('BEDROCK_BEARER_TOKEN', ''),
                     'region' => env('BEDROCK_REGION', env('AWS_DEFAULT_REGION', 'us-east-1')),
                 ],
             ],

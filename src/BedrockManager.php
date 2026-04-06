@@ -10,6 +10,8 @@ use Ubxty\BedrockAi\Client\StreamingClient;
 use Ubxty\BedrockAi\Conversation\ConversationBuilder;
 use Ubxty\BedrockAi\Events\BedrockInvoked;
 use Ubxty\BedrockAi\Exceptions\ConfigurationException;
+use Ubxty\BedrockAi\Exceptions\CostLimitExceededException;
+use Illuminate\Support\Facades\Cache;
 use Ubxty\BedrockAi\Logging\InvocationLogger;
 use Ubxty\BedrockAi\Pricing\PricingService;
 use Ubxty\BedrockAi\Usage\UsageTracker;
@@ -18,7 +20,8 @@ class BedrockManager
 {
     protected array $config;
 
-    protected ?BedrockClient $client = null;
+    /** @var array<string, BedrockClient> */
+    protected array $clients = [];
 
     protected ?PricingService $pricing = null;
 
@@ -40,6 +43,10 @@ class BedrockManager
     {
         $connection ??= $this->config['default'] ?? 'default';
 
+        if (isset($this->clients[$connection])) {
+            return $this->clients[$connection];
+        }
+
         $connectionConfig = $this->config['connections'][$connection] ?? null;
 
         if (! $connectionConfig) {
@@ -54,12 +61,18 @@ class BedrockManager
 
         $retryConfig = $this->config['retry'] ?? [];
 
-        return new BedrockClient(
+        $client = new BedrockClient(
             new CredentialManager($keys),
             $retryConfig['max_retries'] ?? 3,
             $retryConfig['base_delay'] ?? 2,
             $this->config['defaults']['anthropic_version'] ?? 'bedrock-2023-05-31'
         );
+
+        $client->setModelsCacheTtl($this->config['cache']['models_ttl'] ?? 3600);
+
+        $this->clients[$connection] = $client;
+
+        return $client;
     }
 
     /**
@@ -76,10 +89,13 @@ class BedrockManager
         float $temperature = 0.7,
         ?array $pricing = null
     ): array {
+        $this->checkCostLimits();
+
         $modelId = $this->resolveAlias($modelId);
 
         $result = $this->client()->invoke($modelId, $systemPrompt, $userMessage, $maxTokens, $temperature, $pricing);
 
+        $this->trackCost($result['cost'] ?? 0);
         $this->fireInvokedEvent($result);
         $this->getLogger()->log($result);
 
@@ -297,7 +313,18 @@ class BedrockManager
 
         $keys = $connectionConfig['keys'] ?? [];
 
-        return ! empty($keys) && ! empty($keys[0]['aws_key']) && ! empty($keys[0]['aws_secret']);
+        if (empty($keys)) {
+            return false;
+        }
+
+        $firstKey = $keys[0];
+        $authMode = $firstKey['auth_mode'] ?? 'iam';
+
+        if ($authMode === 'bearer') {
+            return ! empty($firstKey['bearer_token']);
+        }
+
+        return ! empty($firstKey['aws_key']) && ! empty($firstKey['aws_secret']);
     }
 
     /**
@@ -309,6 +336,47 @@ class BedrockManager
         $keys = $this->config['connections'][$connection]['keys'] ?? [];
 
         return $keys[0] ?? [];
+    }
+
+    /**
+     * Check cost limits before making an invocation.
+     */
+    protected function checkCostLimits(): void
+    {
+        $dailyLimit = $this->config['limits']['daily'] ?? null;
+        $monthlyLimit = $this->config['limits']['monthly'] ?? null;
+
+        if ($dailyLimit !== null) {
+            $dailyCost = (float) Cache::get('bedrock_ai_daily_cost_' . date('Y-m-d'), 0);
+
+            if ($dailyCost >= (float) $dailyLimit) {
+                throw new CostLimitExceededException('daily', (float) $dailyLimit, $dailyCost);
+            }
+        }
+
+        if ($monthlyLimit !== null) {
+            $monthlyCost = (float) Cache::get('bedrock_ai_monthly_cost_' . date('Y-m'), 0);
+
+            if ($monthlyCost >= (float) $monthlyLimit) {
+                throw new CostLimitExceededException('monthly', (float) $monthlyLimit, $monthlyCost);
+            }
+        }
+    }
+
+    /**
+     * Track cost after a successful invocation.
+     */
+    protected function trackCost(float $cost): void
+    {
+        if ($cost <= 0) {
+            return;
+        }
+
+        $dailyKey = 'bedrock_ai_daily_cost_' . date('Y-m-d');
+        $monthlyKey = 'bedrock_ai_monthly_cost_' . date('Y-m');
+
+        Cache::put($dailyKey, (float) Cache::get($dailyKey, 0) + $cost, now()->endOfDay());
+        Cache::put($monthlyKey, (float) Cache::get($monthlyKey, 0) + $cost, now()->endOfMonth());
     }
 
     /**

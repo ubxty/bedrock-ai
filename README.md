@@ -42,13 +42,17 @@ A Laravel package for seamless **AWS Bedrock** integration. Provides multi-key c
   - [bedrock:configure](#bedrockconfigure)
   - [bedrock:test](#bedrocktest)
   - [bedrock:models](#bedrockmodels)
+  - [bedrock:chat](#bedrockchat)
   - [bedrock:usage](#bedrockusage)
   - [bedrock:pricing](#bedrockpricing)
 - [Architecture](#architecture)
   - [Cross-Region Inference Profiles](#cross-region-inference-profiles)
   - [Multi-Key Rotation & Retry](#multi-key-rotation--retry)
-  - [HTTP Bearer Token Mode (ABSK)](#http-bearer-token-mode-absk)
+  - [HTTP Bearer Token Mode](#http-bearer-token-mode)
   - [Model Spec Resolution](#model-spec-resolution)
+- [Getting AWS Credentials](#getting-aws-credentials)
+  - [Option A: IAM Access Keys](#option-a-iam-access-keys)
+  - [Option B: Bearer Token](#option-b-bearer-token)
 - [Error Handling](#error-handling)
 - [API Reference](#api-reference)
 - [Testing](#testing)
@@ -62,21 +66,21 @@ A Laravel package for seamless **AWS Bedrock** integration. Provides multi-key c
 |---|---|
 | **Multi-key rotation** | Configure multiple AWS credential sets with automatic failover |
 | **Cross-region inference** | Automatic `us.`/`eu.` prefix for newer models (Claude 3.5+, Nova, Llama 3.3+) |
-| **Dual mode** | AWS SDK or HTTP Bearer token (ABSK) — auto-detected from credentials |
+| **Dual auth mode** | Explicit `auth_mode`: IAM Access Key+Secret **or** Bearer Token — no guesswork |
 | **Rate limit retry** | Exponential backoff with configurable retries per key |
 | **Titan + Claude support** | Handles different request/response formats transparently |
 | **Converse API** | Unified AWS Converse API across all model providers |
-| **Streaming** | Real-time token streaming via `invokeModelWithResponseStream` |
+| **Streaming** | Real-time token streaming via `converseStream` (all providers) |
 | **Conversation Builder** | Fluent multi-turn conversation API with chaining |
 | **Model Aliases** | Define short names for model IDs (e.g., `'claude'` → full model ID) |
 | **Token Estimation** | Pre-call token count and cost estimation |
+| **Cost limits** | Configurable daily/monthly spending limits with enforcement |
 | **Laravel Events** | `BedrockInvoked`, `BedrockRateLimited`, `BedrockKeyRotated` events |
 | **Invocation Logger** | Auto-log all invocations with configurable channels |
 | **Health Check Route** | Registerable `/health/bedrock` endpoint for monitoring |
 | **CloudWatch usage** | Track input/output tokens, invocations, latency from CloudWatch metrics |
 | **Real-time pricing** | Fetch current Bedrock pricing from the AWS Pricing API |
-| **Cost limits** | Configurable daily/monthly spending limits |
-| **5 CLI commands** | Configure, test, list models, view usage, fetch pricing |
+| **6 CLI commands** | Configure, test, list models, chat, view usage, fetch pricing |
 | **Facade + DI** | Use `Bedrock::invoke()` or inject `BedrockManager` |
 
 ---
@@ -134,21 +138,30 @@ echo $result['latency_ms'];     // 850
 
 ### Basic Setup
 
-Add these to your `.env`:
+The package supports two authentication modes. Choose **one**:
+
+#### IAM Mode (Recommended)
+
+Uses standard AWS IAM Access Key + Secret:
 
 ```env
+BEDROCK_AUTH_MODE=iam
 BEDROCK_AWS_KEY=AKIA...
 BEDROCK_AWS_SECRET=your-secret-key
 BEDROCK_REGION=us-east-1
 ```
 
-Or use an ABSK Bearer Token (auto-detected):
+#### Bearer Token Mode
+
+Uses a Bearer token (e.g., from AWS Bedrock API keys):
 
 ```env
-BEDROCK_AWS_KEY=ABSKxxxxxxxxxxxxxxx
-BEDROCK_AWS_SECRET=ABSKxxxxxxxxxxxxxxx
+BEDROCK_AUTH_MODE=bearer
+BEDROCK_BEARER_TOKEN=your-bearer-token
 BEDROCK_REGION=us-east-1
 ```
+
+> **Note:** If you don't set `BEDROCK_AUTH_MODE`, it defaults to `iam`. The package also falls back to standard `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` env vars if the Bedrock-specific ones aren't set.
 
 ### Multiple AWS Keys (Failover)
 
@@ -160,12 +173,14 @@ In `config/bedrock.php`, add multiple keys to a connection. If the first key hit
         'keys' => [
             [
                 'label' => 'Primary',
+                'auth_mode' => 'iam',
                 'aws_key' => env('BEDROCK_AWS_KEY'),
                 'aws_secret' => env('BEDROCK_AWS_SECRET'),
                 'region' => 'us-east-1',
             ],
             [
                 'label' => 'Backup',
+                'auth_mode' => 'iam',
                 'aws_key' => env('BEDROCK_AWS_KEY_2'),
                 'aws_secret' => env('BEDROCK_AWS_SECRET_2'),
                 'region' => 'us-west-2',
@@ -390,10 +405,10 @@ $result = $converseClient->converse($modelId, $messages);
 
 ### Streaming Responses
 
-Stream responses in real-time for chat UIs and long outputs:
+Stream responses in real-time for chat UIs and long outputs. Uses the unified `converseStream` API which works with **all** model providers:
 
 ```php
-// Stream with InvokeModel API
+// Stream via the manager
 $result = Bedrock::stream(
     modelId: 'anthropic.claude-sonnet-4-20250514-v1:0',
     systemPrompt: 'You are helpful.',
@@ -404,7 +419,7 @@ $result = Bedrock::stream(
     }
 );
 
-// Stream with Converse API
+// Stream with Converse API (multi-turn)
 $streamingClient = Bedrock::streamingClient();
 $result = $streamingClient->converseStream(
     modelId: 'anthropic.claude-sonnet-4-20250514-v1:0',
@@ -412,7 +427,18 @@ $result = $streamingClient->converseStream(
     onChunk: fn(string $text) => echo $text,
     systemPrompt: 'Be concise.'
 );
+
+// Stream via ConversationBuilder
+$conversation = Bedrock::conversation('claude')
+    ->system('You are helpful.')
+    ->user('Write a haiku about Laravel.');
+
+$result = $conversation->sendStream(function (string $chunk) {
+    echo $chunk;
+});
 ```
+
+> **Note:** Streaming requires IAM auth mode. Bearer token mode does not support streaming — use `converse()` or `send()` instead.
 
 ### Token Estimation
 
@@ -597,8 +623,8 @@ php artisan bedrock:configure --test
 ```
 
 **What it does:**
-1. Prompts for AWS Key, Secret, Region, Label
-2. Auto-detects SDK vs HTTP Bearer mode
+1. Asks whether you want IAM or Bearer token auth
+2. Prompts for the relevant credentials based on your choice
 3. Optionally configures Pricing API credentials
 4. Generates `.env` entries
 5. Optionally writes to `.env` automatically
@@ -642,6 +668,36 @@ php artisan bedrock:models --provider=anthropic
 # JSON output
 php artisan bedrock:models --json
 ```
+
+### `bedrock:chat`
+
+Interactive CLI chat session with any Bedrock model.
+
+```bash
+# Start interactive chat (will prompt for model selection)
+php artisan bedrock:chat
+
+# Start with a specific model
+php artisan bedrock:chat --model=anthropic.claude-sonnet-4-20250514-v1:0
+
+# Set a custom system prompt
+php artisan bedrock:chat --system="You are a medical assistant."
+
+# Use a specific connection
+php artisan bedrock:chat --connection=production
+```
+
+**In-session commands:**
+
+| Command | Description |
+|---|---|
+| `/help` | Show available commands |
+| `/quit` | End the session |
+| `/reset` | Clear conversation history (keeps settings) |
+| `/stats` | Show session stats (messages, tokens, cost) |
+| `/system <prompt>` | Change the system prompt |
+| `/model <id>` | Switch to a different model |
+| `/temp <0.0-1.0>` | Adjust temperature |
 
 ### `bedrock:usage`
 
@@ -718,11 +774,14 @@ Request → Key 1 → Rate Limited → Retry (2s) → Retry (4s) → Retry (8s) 
 - On persistent failure, the next key is tried
 - All keys exhausted → `RateLimitException` or `BedrockException`
 
-### HTTP Bearer Token Mode (ABSK)
+### HTTP Bearer Token Mode
 
-If your AWS key or secret starts with `ABSK`, the client automatically uses HTTP Bearer token mode instead of the AWS SDK. This is useful for:
-- Bedrock API keys distributed via AWS console
+When `auth_mode` is set to `bearer`, the client uses HTTP Bearer token authentication instead of the AWS SDK. This is useful for:
+- Bedrock API keys distributed via the AWS console
 - Environments without full IAM credentials
+- Simplified authentication without managing access key pairs
+
+> **Limitation:** Bearer token mode does not support streaming responses. Use IAM mode if you need streaming.
 
 ### Model Spec Resolution
 
@@ -734,6 +793,77 @@ use Ubxty\BedrockAi\Models\ModelSpecResolver;
 $specs = ModelSpecResolver::resolve('anthropic.claude-3-5-sonnet-20241022-v2:0');
 // ['context_window' => 200000, 'max_tokens' => 8192]
 ```
+
+---
+
+## Getting AWS Credentials
+
+You need AWS credentials with Bedrock access. There are two options:
+
+### Option A: IAM Access Keys
+
+This is the **recommended** approach for production use.
+
+1. **Create an IAM user** in the [AWS Console → IAM → Users](https://console.aws.amazon.com/iam/home#/users):
+   - Click **Create user** → enter a name (e.g., `bedrock-api`)
+   - Do NOT enable console access — this is a programmatic user
+
+2. **Attach Bedrock permissions** — create or attach a policy with:
+   ```json
+   {
+       "Version": "2012-10-17",
+       "Statement": [
+           {
+               "Effect": "Allow",
+               "Action": [
+                   "bedrock:InvokeModel",
+                   "bedrock:InvokeModelWithResponseStream",
+                   "bedrock:ListFoundationModels",
+                   "bedrock:GetFoundationModel"
+               ],
+               "Resource": "*"
+           }
+       ]
+   }
+   ```
+   > For tighter security, replace `"Resource": "*"` with specific model ARNs.
+
+3. **Generate Access Keys** — go to the user → **Security credentials** tab → **Create access key**:
+   - Choose **Third-party service** as the use case
+   - Copy the **Access Key ID** (`AKIA...`) and **Secret Access Key**
+
+4. **Add to `.env`:**
+   ```env
+   BEDROCK_AUTH_MODE=iam
+   BEDROCK_AWS_KEY=AKIA...
+   BEDROCK_AWS_SECRET=your-secret-key
+   BEDROCK_REGION=us-east-1
+   ```
+
+5. **(Optional)** For usage tracking and pricing, add CloudWatch and Pricing permissions:
+   ```json
+   {
+       "Effect": "Allow",
+       "Action": [
+           "cloudwatch:GetMetricData",
+           "pricing:GetProducts"
+       ],
+       "Resource": "*"
+   }
+   ```
+
+### Option B: Bearer Token
+
+1. In the [AWS Bedrock Console](https://console.aws.amazon.com/bedrock/), navigate to **API keys**
+2. Create a new API key and copy the token
+3. **Add to `.env`:**
+   ```env
+   BEDROCK_AUTH_MODE=bearer
+   BEDROCK_BEARER_TOKEN=your-token-here
+   BEDROCK_REGION=us-east-1
+   ```
+
+> **Tip:** Run `php artisan bedrock:configure` for an interactive wizard that guides you through the setup and writes your `.env` automatically.
 
 ---
 

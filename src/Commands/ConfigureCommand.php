@@ -25,22 +25,33 @@ class ConfigureCommand extends Command
         $this->info('  ╚═══════════════════════════════════════════╝');
         $this->info('');
 
-        // Step 1: AWS Key
-        $this->info('  Step 1: AWS Credentials');
+        // Step 1: Auth Mode
+        $this->info('  Step 1: Authentication Mode');
         $this->line('  ─────────────────────────────────────────────');
-        $this->line('  Enter your AWS Access Key ID or ABSK Bearer Token.');
-        $this->line('  (ABSK tokens use HTTP mode; standard keys use AWS SDK)');
+        $this->line('  Choose how to authenticate with AWS Bedrock:');
+        $this->line('  • <fg=yellow>iam</>     - AWS IAM Access Key + Secret (standard)');
+        $this->line('  • <fg=yellow>bearer</>  - Bearer Token (e.g., ABSK tokens)');
         $this->newLine();
 
-        $awsKey = $this->ask('AWS Access Key ID / Bearer Token');
-        $awsSecret = $this->secret('AWS Secret Access Key (hidden)');
+        $authMode = $this->choice('Authentication mode', ['iam', 'bearer'], 0);
+
+        $awsKey = '';
+        $awsSecret = '';
+        $bearerToken = '';
+
+        if ($authMode === 'bearer') {
+            $bearerToken = $this->secret('Bearer Token (hidden)');
+        } else {
+            $awsKey = $this->ask('AWS Access Key ID');
+            $awsSecret = $this->secret('AWS Secret Access Key (hidden)');
+        }
+
         $region = $this->ask('AWS Region', 'us-east-1');
         $label = $this->ask('Key Label (for identification)', 'Primary');
 
         // Detect mode
-        $isHttp = str_starts_with($awsKey, 'ABSK') || str_starts_with($awsSecret, 'ABSK');
         $this->newLine();
-        $this->info('  Mode: ' . ($isHttp ? 'HTTP Bearer Token (ABSK)' : 'AWS SDK (IAM)'));
+        $this->info('  Mode: ' . ($authMode === 'bearer' ? 'HTTP Bearer Token' : 'AWS SDK (IAM)'));
 
         // Step 2: Pricing API (optional)
         $this->newLine();
@@ -65,9 +76,10 @@ class ConfigureCommand extends Command
             ['Setting', 'Value'],
             [
                 ['Label', $label],
-                ['AWS Key', $this->maskSecret($awsKey)],
+                ['Auth Mode', $authMode],
+                ['AWS Key', $authMode === 'iam' ? $this->maskSecret($awsKey) : 'N/A'],
+                ['Bearer Token', $authMode === 'bearer' ? $this->maskSecret($bearerToken) : 'N/A'],
                 ['Region', $region],
-                ['Mode', $isHttp ? 'HTTP Bearer' : 'AWS SDK'],
                 ['Pricing API', $pricingKey ? $this->maskSecret($pricingKey) : 'Same as above'],
             ]
         );
@@ -78,8 +90,15 @@ class ConfigureCommand extends Command
         $this->line('  ─────────────────────────────────────────────');
         $this->newLine();
         $this->line("  BEDROCK_KEY_LABEL={$label}");
-        $this->line("  BEDROCK_AWS_KEY={$awsKey}");
-        $this->line("  BEDROCK_AWS_SECRET={$awsSecret}");
+        $this->line("  BEDROCK_AUTH_MODE={$authMode}");
+
+        if ($authMode === 'bearer') {
+            $this->line("  BEDROCK_BEARER_TOKEN={$bearerToken}");
+        } else {
+            $this->line("  BEDROCK_AWS_KEY={$awsKey}");
+            $this->line("  BEDROCK_AWS_SECRET={$awsSecret}");
+        }
+
         $this->line("  BEDROCK_REGION={$region}");
 
         if ($pricingKey) {
@@ -90,14 +109,25 @@ class ConfigureCommand extends Command
         // Step 5: Write to .env
         $this->newLine();
         if ($this->confirm('Write these to your .env file automatically?', true)) {
-            $this->writeEnv([
+            $envValues = [
                 'BEDROCK_KEY_LABEL' => $label,
-                'BEDROCK_AWS_KEY' => $awsKey,
-                'BEDROCK_AWS_SECRET' => $awsSecret,
+                'BEDROCK_AUTH_MODE' => $authMode,
                 'BEDROCK_REGION' => $region,
-                'BEDROCK_PRICING_KEY' => $pricingKey,
-                'BEDROCK_PRICING_SECRET' => $pricingSecret,
-            ]);
+            ];
+
+            if ($authMode === 'bearer') {
+                $envValues['BEDROCK_BEARER_TOKEN'] = $bearerToken;
+            } else {
+                $envValues['BEDROCK_AWS_KEY'] = $awsKey;
+                $envValues['BEDROCK_AWS_SECRET'] = $awsSecret;
+            }
+
+            if ($pricingKey) {
+                $envValues['BEDROCK_PRICING_KEY'] = $pricingKey;
+                $envValues['BEDROCK_PRICING_SECRET'] = $pricingSecret;
+            }
+
+            $this->writeEnv($envValues);
 
             $this->info('  ✓ .env file updated.');
             $this->line('  Run `php artisan config:clear` to reload configuration.');
@@ -115,8 +145,10 @@ class ConfigureCommand extends Command
                     'default' => [
                         'keys' => [[
                             'label' => $label,
+                            'auth_mode' => $authMode,
                             'aws_key' => $awsKey,
                             'aws_secret' => $awsSecret,
+                            'bearer_token' => $bearerToken,
                             'region' => $region,
                         ]],
                     ],
@@ -165,9 +197,10 @@ class ConfigureCommand extends Command
                     ['Setting', 'Value'],
                     [
                         ['Label', $key['label'] ?? 'Key ' . ($i + 1)],
-                        ['AWS Key', $this->maskSecret($key['aws_key'] ?? '')],
+                        ['Auth Mode', $key['auth_mode'] ?? 'iam'],
+                        ['AWS Key', ($key['auth_mode'] ?? 'iam') === 'iam' ? $this->maskSecret($key['aws_key'] ?? '') : 'N/A'],
+                        ['Bearer Token', ($key['auth_mode'] ?? 'iam') === 'bearer' ? $this->maskSecret($key['bearer_token'] ?? '') : 'N/A'],
                         ['Region', $key['region'] ?? 'us-east-1'],
-                        ['Mode', str_starts_with($key['aws_key'] ?? '', 'ABSK') ? 'HTTP Bearer' : 'AWS SDK'],
                     ]
                 );
             }

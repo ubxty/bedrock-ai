@@ -3,6 +3,7 @@
 namespace Ubxty\BedrockAi\Client;
 
 use Aws\BedrockRuntime\BedrockRuntimeClient;
+use Illuminate\Support\Facades\Http;
 use Ubxty\BedrockAi\Exceptions\BedrockException;
 use Ubxty\BedrockAi\Exceptions\RateLimitException;
 
@@ -56,6 +57,14 @@ class ConverseClient
                     $key = $this->credentials->current();
                     $region = $key['region'] ?? 'us-east-1';
                     $resolvedModelId = InferenceProfileResolver::resolve($modelId, $region);
+
+                    if ($this->credentials->isBearerMode()) {
+                        return $this->converseHttp(
+                            $resolvedModelId, $messages, $systemPrompt,
+                            $maxTokens, $temperature, $startTime
+                        );
+                    }
+
                     $client = $this->getSdkClient();
 
                     $params = [
@@ -144,6 +153,72 @@ class ConverseClient
                 ],
             ];
         }, $messages);
+    }
+
+    /**
+     * Send a conversation via HTTP Bearer mode.
+     *
+     * @param array<int, array{role: string, content: string}> $messages
+     * @return array{response: string, input_tokens: int, output_tokens: int, total_tokens: int, stop_reason: string, latency_ms: int, model_id: string, key_used: string}
+     */
+    protected function converseHttp(
+        string $modelId,
+        array $messages,
+        string $systemPrompt,
+        int $maxTokens,
+        float $temperature,
+        float $startTime,
+    ): array {
+        $key = $this->credentials->current();
+        $region = $key['region'] ?? 'us-east-1';
+        $bearerToken = $this->credentials->getBearerToken();
+
+        $url = "https://bedrock-runtime.{$region}.amazonaws.com/model/{$modelId}/converse";
+
+        $body = [
+            'messages' => $this->formatMessages($messages),
+            'inferenceConfig' => [
+                'maxTokens' => $maxTokens,
+                'temperature' => $temperature,
+            ],
+        ];
+
+        if ($systemPrompt !== '') {
+            $body['system'] = [['text' => $systemPrompt]];
+        }
+
+        $response = Http::withHeaders([
+            'Authorization' => 'Bearer ' . $bearerToken,
+            'Content-Type' => 'application/json',
+            'Accept' => 'application/json',
+        ])->post($url, $body);
+
+        if (! $response->successful()) {
+            $status = $response->status();
+
+            if ($status === 429) {
+                throw new RateLimitException('429 Too many requests - rate limited', 429);
+            }
+
+            throw new BedrockException("Bedrock HTTP Error: {$status} - {$response->body()}", $status);
+        }
+
+        $data = $response->json();
+        $outputText = $data['output']['message']['content'][0]['text'] ?? '';
+        $inputTokens = $data['usage']['inputTokens'] ?? 0;
+        $outputTokens = $data['usage']['outputTokens'] ?? 0;
+        $stopReason = $data['stopReason'] ?? 'end_turn';
+
+        return [
+            'response' => $outputText,
+            'input_tokens' => $inputTokens,
+            'output_tokens' => $outputTokens,
+            'total_tokens' => $inputTokens + $outputTokens,
+            'stop_reason' => $stopReason,
+            'latency_ms' => (int) ((microtime(true) - $startTime) * 1000),
+            'model_id' => $modelId,
+            'key_used' => $key['label'] ?? 'Primary',
+        ];
     }
 
     protected function getSdkClient(): BedrockRuntimeClient
