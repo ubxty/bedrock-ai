@@ -53,6 +53,7 @@ A Laravel package for seamless **AWS Bedrock** integration. Provides multi-key c
 - [Getting AWS Credentials](#getting-aws-credentials)
   - [Option A: IAM Access Keys](#option-a-iam-access-keys)
   - [Option B: Bearer Token](#option-b-bearer-token)
+- [Anthropic Model Access](#anthropic-model-access)
 - [Error Handling](#error-handling)
 - [API Reference](#api-reference)
 - [Testing](#testing)
@@ -91,6 +92,8 @@ A Laravel package for seamless **AWS Bedrock** integration. Provides multi-key c
 - Laravel 11 or 12
 - `aws/aws-sdk-php` ^3.300
 - AWS credentials with Bedrock access
+
+> **Anthropic models only:** First-time use of any Claude model requires a one-time use-case form submission per AWS account. See [Anthropic Model Access](#anthropic-model-access) below.
 
 ---
 
@@ -873,6 +876,64 @@ This is the **recommended** approach for production use.
    ```
 
 > **Tip:** Run `php artisan bedrock:configure` for an interactive wizard that guides you through the setup and writes your `.env` automatically.
+
+---
+
+## Anthropic Model Access
+
+> **This requirement only applies to Anthropic Claude models.** Amazon Nova, Meta Llama, Mistral, Cohere, and all other providers are available immediately with no form required.
+
+Before any Claude model can be invoked, AWS requires a **one-time use-case submission per account** (or per organization management account). The information you provide is shared with Anthropic.
+
+This is a one-time action — once submitted, all Claude models are unlocked for the entire account, including all IAM users and API keys.
+
+### How to submit
+
+1. **Open the Bedrock Model Catalog** in the AWS Console:
+   ```
+   https://us-east-1.console.aws.amazon.com/bedrock/home?region=us-east-1#/model-catalog
+   ```
+   > Replace `us-east-1` with your region if different.
+
+2. **Search for `Claude`** and click any Claude model card (e.g. Claude Sonnet 4).
+
+3. **Click "Open in playground"** — this triggers the use-case form if your account hasn't submitted it yet.
+
+4. **Fill in the form:**
+   - **Company / intended use** — a brief description of your project
+   - **Use case category** — e.g. "Text generation, summarization, Q&A"
+   - **Regulated use** — answer honestly (medical, legal, financial questions)
+
+5. **Submit.** AWS typically grants access within seconds to a few minutes for standard use cases.
+
+6. **Verify access** by invoking any Claude model:
+   ```bash
+   php artisan bedrock:test
+   ```
+
+### What the error looks like
+
+If the form hasn't been submitted, all Claude invocations return:
+
+```
+Bedrock error (404): Model use case details have not been submitted for this account.
+Fill out the Anthropic use case details form before using the model.
+If you have already filled out the form, try again in 15 minutes.
+```
+
+This is an **AWS account-level restriction**, not a library or credentials issue.
+
+### Accessing models before the form is approved
+
+While waiting, you can use all non-Anthropic models without any restriction:
+
+```php
+// These work immediately — no form needed
+Bedrock::invoke('amazon.nova-pro-v1:0', $system, $message);
+Bedrock::invoke('meta.llama3-3-70b-instruct-v1:0', $system, $message);
+Bedrock::invoke('mistral.mistral-large-2402-v1:0', $system, $message);
+Bedrock::invoke('cohere.command-r-plus-v1:0', $system, $message);
+```
 
 ---
 
