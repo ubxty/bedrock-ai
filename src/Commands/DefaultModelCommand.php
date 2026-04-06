@@ -46,47 +46,133 @@ class DefaultModelCommand extends Command
         $this->info('  ╚═══════════════════════════════════════════╝');
         $this->info('');
 
-        // ── Chat model ────────────────────────────────────────────
-        $currentChat = $manager->defaultModel();
-        $this->line('  <options=bold>Step 1: Default Chat Model</>');
-        if ($currentChat) {
-            $this->line("  Current: <fg=cyan>{$currentChat}</>");
-        }
+        $currentChat  = $manager->defaultModel();
+        $currentImage = $manager->defaultImageModel();
+
+        // Show what is already configured
+        $this->line('  Current defaults:');
+        $this->line('  Chat  → ' . ($currentChat  ? "<fg=cyan>{$currentChat}</>"  : '<fg=yellow>not set</>'));
+        $this->line('  Image → ' . ($currentImage ? "<fg=cyan>{$currentImage}</>" : '<fg=yellow>not set</>'));
         $this->newLine();
 
-        $chatModelId = $this->pickModel($manager, $connection);
+        // Ask which type(s) to configure
+        $setChat  = ! $currentChat  || $this->confirm('  Update default <options=bold>chat</> model?',  ! $currentChat);
+        $setImage = ! $currentImage || $this->confirm('  Update default <options=bold>image</> model?', ! $currentImage);
 
-        if (! $chatModelId) {
-            $this->error('  No chat model selected. Aborting.');
+        if (! $setChat && ! $setImage) {
+            $this->line('  Nothing to update.');
 
-            return self::FAILURE;
+            return self::SUCCESS;
+        }
+
+        $chatModelId  = $currentChat;
+        $imageModelId = $currentImage;
+
+        // ── Chat model ────────────────────────────────────────────
+        if ($setChat) {
+            $this->newLine();
+            $this->line('  <options=bold>─── Default Chat Model ──────────────────────────────────</>');
+            $this->newLine();
+
+            $chatModelId = $this->pickModel($manager, $connection);
+
+            if (! $chatModelId) {
+                $this->error('  No chat model selected. Aborting.');
+
+                return self::FAILURE;
+            }
+
+            // Test before committing
+            if ($this->confirm("  Test <options=bold>{$chatModelId}</> before setting as default?", true)) {
+                if (! $this->testModel($manager, $connection, $chatModelId, 'chat')) {
+                    if (! $this->confirm('  Test failed. Set this model as default anyway?', false)) {
+                        $this->warn('  Chat model not saved.');
+                        $chatModelId = $currentChat; // revert
+                    }
+                }
+            }
         }
 
         // ── Image model ───────────────────────────────────────────
-        $this->newLine();
-        $this->line('  <options=bold>Step 2: Default Image Model</>');
-        $currentImage = $manager->defaultImageModel();
-        if ($currentImage) {
-            $this->line("  Current: <fg=cyan>{$currentImage}</>");
-        }
-        $this->line('  <fg=gray>Only models with image-input capability are shown.</>');
-        $this->newLine();
+        if ($setImage) {
+            $this->newLine();
+            $this->line('  <options=bold>─── Default Image Model ─────────────────────────────────</>');
+            $this->line('  <fg=gray>Only models with image-input capability are shown.</>');
+            $this->newLine();
 
-        $imageModelId = $this->pickModel($manager, $connection, 'image');
+            $imageModelId = $this->pickModel($manager, $connection, 'image');
+
+            if ($imageModelId) {
+                if ($this->confirm("  Test <options=bold>{$imageModelId}</> before setting as default?", true)) {
+                    if (! $this->testModel($manager, $connection, $imageModelId, 'image')) {
+                        if (! $this->confirm('  Test failed. Set this model as default anyway?', false)) {
+                            $this->warn('  Image model not saved.');
+                            $imageModelId = $currentImage; // revert
+                        }
+                    }
+                }
+            }
+        }
 
         // ── Write env ─────────────────────────────────────────────
         $this->writeEnv([
-            'BEDROCK_DEFAULT_MODEL'       => $chatModelId,
+            'BEDROCK_DEFAULT_MODEL'       => $chatModelId  ?? '',
             'BEDROCK_DEFAULT_IMAGE_MODEL' => $imageModelId ?? '',
         ]);
 
         $this->newLine();
-        $this->info("  ✓ Default chat model:  <options=bold>{$chatModelId}</>");
-        $this->info('  ✓ Default image model: <options=bold>' . ($imageModelId ?: '(none)') . '</>');
+        $this->info('  ✓ Default models saved:');
+        $this->line('    Chat  → <options=bold>' . ($chatModelId  ?: '(none)') . '</>');
+        $this->line('    Image → <options=bold>' . ($imageModelId ?: '(none)') . '</>');
         $this->line('  <fg=gray>Written to your .env file.</>');
         $this->newLine();
 
         return self::SUCCESS;
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+
+    /**
+     * Test the model with a quick invocation. Returns true on success.
+     */
+    protected function testModel(BedrockManager $manager, ?string $connection, string $modelId, string $type): bool
+    {
+        $this->line("  <options=bold>Testing {$modelId}...</>");
+
+        try {
+            if ($type === 'image') {
+                // Image models expect an image input; we test with the Converse API
+                // using a plain text message to confirm connectivity.
+                $result = $manager->converse(
+                    $modelId,
+                    [['role' => 'user', 'content' => 'Reply with just the word: OK']],
+                    '',
+                    50,
+                    0.1,
+                    $connection,
+                );
+                $preview = trim($result['response'] ?? '');
+            } else {
+                $result = $manager->invoke(
+                    $modelId,
+                    'You are a helpful assistant.',
+                    'Reply with just the word: OK',
+                    50,
+                    0.1,
+                    null,
+                    $connection,
+                );
+                $preview = trim($result['response'] ?? '');
+            }
+
+            $this->info("  ✓ Model responded: <fg=cyan>\"{$preview}\"</> ({$result['latency_ms']}ms, {$result['total_tokens']} tokens)");
+
+            return true;
+        } catch (\Throwable $e) {
+            $this->error('  ✗ Test failed: ' . $e->getMessage());
+
+            return false;
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────
