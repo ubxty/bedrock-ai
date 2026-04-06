@@ -31,76 +31,64 @@ class ModelsCommand extends Command
         $this->info('Fetching models from AWS Bedrock...');
 
         try {
-            $models = $manager->fetchModels($connection);
+            $grouped = $manager->getModelsGrouped($connection);
         } catch (\Exception $e) {
             $this->error('Failed to fetch models: ' . $e->getMessage());
 
             return 1;
         }
 
-        if (empty($models)) {
+        if (empty($grouped)) {
             $this->warn('No models found.');
 
             return 0;
         }
 
-        // Apply filters
-        if ($filter) {
-            $models = array_filter($models, function ($model) use ($filter) {
-                return str_contains(strtolower($model['model_id']), strtolower($filter))
-                    || str_contains(strtolower($model['name']), strtolower($filter));
-            });
+        // Apply --filter and --provider on the grouped output
+        if ($filter || $providerFilter) {
+            foreach ($grouped as $provider => &$providerModels) {
+                if ($providerFilter && ! str_contains(strtolower($provider), strtolower($providerFilter))) {
+                    unset($grouped[$provider]);
+                    continue;
+                }
+                if ($filter) {
+                    $providerModels = array_filter($providerModels, function ($m) use ($filter) {
+                        return str_contains(strtolower($m['model_id']), strtolower($filter))
+                            || str_contains(strtolower($m['name']), strtolower($filter));
+                    });
+                }
+                if (empty($providerModels)) {
+                    unset($grouped[$provider]);
+                }
+            }
+            unset($providerModels);
         }
-
-        if ($providerFilter) {
-            $models = array_filter($models, function ($model) use ($providerFilter) {
-                return str_contains(strtolower($model['model_id']), strtolower($providerFilter))
-                    || str_contains(strtolower($model['provider'] ?? ''), strtolower($providerFilter));
-            });
-        }
-
-        $models = array_values($models);
 
         // Filter legacy models unless --legacy is passed
         $showLegacy = $this->option('legacy');
         if (! $showLegacy) {
-            $models = array_values(array_filter($models, fn ($m) => $m['is_active']));
+            foreach ($grouped as $provider => &$providerModels) {
+                $providerModels = array_values(array_filter($providerModels, fn ($m) => $m['is_active']));
+                if (empty($providerModels)) {
+                    unset($grouped[$provider]);
+                }
+            }
+            unset($providerModels);
         }
 
+        $totalModels = array_sum(array_map('count', $grouped));
+
         if ($this->option('json')) {
-            $this->line(json_encode($models, JSON_PRETTY_PRINT));
+            $this->line(json_encode($grouped, JSON_PRETTY_PRINT));
 
             return 0;
         }
 
-        $this->info('Found ' . count($models) . ($showLegacy ? ' models (including legacy).' : ' active models.'));
+        $this->info('Found ' . $totalModels . ($showLegacy ? ' models (including legacy).' : ' active models.'));
         if (! $showLegacy) {
             $this->line('<fg=gray>  Pass --legacy to include deprecated models.</>');  
         }
         $this->newLine();
-
-        // Group by provider prefix
-        $grouped = [];
-        foreach ($models as $model) {
-            $prefix = explode('.', $model['model_id'])[0] ?? 'other';
-            $grouped[$prefix][] = $model;
-        }
-
-        ksort($grouped);
-
-        // Remove providers that have been globally disabled in config.
-        $disabled = array_map(
-            'strtolower',
-            array_filter((array) (config('bedrock.providers.disabled_providers', [])))
-        );
-
-        if (! empty($disabled)) {
-            $grouped = array_filter(
-                $grouped,
-                fn (string $provider) => ! in_array(strtolower($provider), $disabled, true),
-                ARRAY_FILTER_USE_KEY
-            );
-        }
 
         foreach ($grouped as $provider => $providerModels) {
             $this->info("  {$provider} (" . count($providerModels) . ' models)');

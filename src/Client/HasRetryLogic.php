@@ -124,4 +124,71 @@ trait HasRetryLogic
     {
         // Override in subclasses to dispatch events, log, etc.
     }
+
+    /**
+     * Format messages into Converse API format.
+     *
+     * Supports plain-text messages (`content` is a string) and multimodal messages
+     * (`content` is an array of typed blocks: text, image, document).
+     *
+     * @param  array<int, array{role: string, content: string|array}>  $messages
+     * @param  bool  $httpMode  true keeps image/document bytes as base64 (HTTP/JSON API),
+     *                          false decodes to raw binary for the AWS PHP SDK.
+     * @return array<int, array{role: string, content: array}>
+     */
+    protected function formatMessages(array $messages, bool $httpMode = false): array
+    {
+        return array_map(function (array $msg) use ($httpMode) {
+            $content = $msg['content'];
+
+            if (is_string($content)) {
+                return [
+                    'role' => $msg['role'],
+                    'content' => [['text' => $content]],
+                ];
+            }
+
+            $blocks = [];
+            foreach ($content as $block) {
+                $type = $block['type'] ?? 'text';
+
+                if ($type === 'text') {
+                    $blocks[] = ['text' => $block['text']];
+                } elseif ($type === 'image') {
+                    $bytes = $httpMode ? $block['data'] : base64_decode($block['data']);
+                    $blocks[] = [
+                        'image' => [
+                            'format' => $block['format'],
+                            'source' => ['bytes' => $bytes],
+                        ],
+                    ];
+                } elseif ($type === 'document') {
+                    $bytes = $httpMode ? $block['data'] : base64_decode($block['data']);
+                    $blocks[] = [
+                        'document' => [
+                            'format' => $block['format'],
+                            'name'   => $block['name'] ?? 'document',
+                            'source' => ['bytes' => $bytes],
+                        ],
+                    ];
+                }
+            }
+
+            return ['role' => $msg['role'], 'content' => $blocks];
+        }, $messages);
+    }
+
+    /**
+     * Calculate the cost of an invocation from token counts.
+     */
+    protected function calculateCost(int $inputTokens, int $outputTokens, ?array $pricing = null): float
+    {
+        $inputPrice = $pricing['input_price_per_1k'] ?? 0.003;
+        $outputPrice = $pricing['output_price_per_1k'] ?? 0.015;
+
+        return round(
+            ($inputTokens / 1000) * $inputPrice + ($outputTokens / 1000) * $outputPrice,
+            6
+        );
+    }
 }

@@ -63,7 +63,17 @@ class ConversationBuilder
      */
     public function userWithImage(string $prompt, string $source, string $format = 'auto'): static
     {
-        $base64 = is_file($source) ? base64_encode(file_get_contents($source)) : $source;
+        if (is_file($source)) {
+            $size = filesize($source);
+            if ($size > 15 * 1024 * 1024) {
+                throw new \Ubxty\BedrockAi\Exceptions\BedrockException(
+                    'Image file exceeds 15 MB limit (' . round($size / 1024 / 1024, 1) . ' MB). Resize or compress it first.'
+                );
+            }
+            $base64 = base64_encode(file_get_contents($source));
+        } else {
+            $base64 = $source;
+        }
 
         if ($format === 'auto') {
             $ext    = strtolower(pathinfo($source, PATHINFO_EXTENSION));
@@ -100,11 +110,32 @@ class ConversationBuilder
      */
     public function userWithDocument(string $prompt, string $source, string $format = 'auto', string $name = ''): static
     {
-        $base64 = is_file($source) ? base64_encode(file_get_contents($source)) : $source;
+        if (is_file($source)) {
+            $size = filesize($source);
+            if ($size > 15 * 1024 * 1024) {
+                throw new \Ubxty\BedrockAi\Exceptions\BedrockException(
+                    'Document file exceeds 15 MB limit (' . round($size / 1024 / 1024, 1) . ' MB). Reduce the file size first.'
+                );
+            }
+            $base64 = base64_encode(file_get_contents($source));
+        } else {
+            $base64 = $source;
+        }
 
         if ($format === 'auto') {
             $ext    = strtolower(pathinfo($source, PATHINFO_EXTENSION));
-            $format = $ext ?: 'pdf';
+            $format = match ($ext) {
+                'pdf'          => 'pdf',
+                'csv'          => 'csv',
+                'doc'          => 'doc',
+                'docx'         => 'docx',
+                'xls'          => 'xls',
+                'xlsx'         => 'xlsx',
+                'html', 'htm'  => 'html',
+                'txt', 'text'  => 'txt',
+                'md', 'markdown' => 'md',
+                default        => 'pdf',
+            };
         }
 
         if ($name === '' && is_file($source)) {

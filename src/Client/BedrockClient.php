@@ -261,18 +261,7 @@ class BedrockClient
 
     // ───────────────────────────────────────────────────────────
     //  Private: Helpers
-    // ───────────────────────────────────────────────────────────
-
-    protected function calculateCost(int $inputTokens, int $outputTokens, ?array $pricing): float
-    {
-        $inputPrice = $pricing['input_price_per_1k'] ?? 0.003;
-        $outputPrice = $pricing['output_price_per_1k'] ?? 0.015;
-
-        return round(
-            ($inputTokens / 1000) * $inputPrice + ($outputTokens / 1000) * $outputPrice,
-            6
-        );
-    }
+    // calculateCost() is inherited from HasRetryLogic trait.
 
     /**
      * Extract a user-friendly error message from raw Bedrock errors.

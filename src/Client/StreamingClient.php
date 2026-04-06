@@ -79,12 +79,7 @@ class StreamingClient
 
             $params = [
                 'modelId' => $resolvedModelId,
-                'messages' => array_map(function (array $msg) {
-                    return [
-                        'role' => $msg['role'],
-                        'content' => [['text' => $msg['content']]],
-                    ];
-                }, $messages),
+                'messages' => $this->formatMessages($messages),
                 'inferenceConfig' => [
                     'maxTokens' => $maxTokens,
                     'temperature' => $temperature,
