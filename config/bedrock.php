@@ -114,6 +114,26 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Provider Filtering
+    |--------------------------------------------------------------------------
+    |
+    | Control which model providers are visible across the entire package —
+    | in terminal commands (bedrock:test, bedrock:default-model, etc.) and
+    | in all PHP calls (getModelsGrouped, syncModels, etc.).
+    |
+    | 'disabled_providers' — case-insensitive list of provider names to hide.
+    | Add any provider name exactly as it appears in the model list.
+    |
+    | Example:
+    |   'disabled_providers' => ['AI21 Labs', 'Cohere', 'Writer'],
+    |
+    */
+    'providers' => [
+        'disabled_providers' => explode(',', env('BEDROCK_DISABLED_PROVIDERS', '')),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Default Invocation Settings
     |--------------------------------------------------------------------------
     |

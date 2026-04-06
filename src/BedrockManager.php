@@ -318,6 +318,20 @@ class BedrockManager
             $grouped[$provider][] = $model;
         }
 
+        // Remove providers that have been globally disabled in config.
+        $disabled = array_map(
+            'strtolower',
+            array_filter((array) ($this->config['providers']['disabled_providers'] ?? []))
+        );
+
+        if (! empty($disabled)) {
+            $grouped = array_filter(
+                $grouped,
+                fn (string $provider) => ! in_array(strtolower($provider), $disabled, true),
+                ARRAY_FILTER_USE_KEY
+            );
+        }
+
         ksort($grouped);
 
         return $grouped;
