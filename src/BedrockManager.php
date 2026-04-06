@@ -314,6 +314,7 @@ class BedrockManager
                     'context_window'   => $model['context_window'],
                     'max_tokens'       => $model['max_tokens'],
                     'capabilities'     => json_encode($model['capabilities']),
+                    'input_modalities' => json_encode($model['input_modalities'] ?? ['text']),
                     'is_active'        => $model['is_active'] ? 1 : 0,
                     'lifecycle_status' => $model['is_active'] ? 'ACTIVE' : 'LEGACY',
                     'synced_at'        => $now,
@@ -321,7 +322,7 @@ class BedrockManager
                     'updated_at'       => $now,
                 ],
                 ['model_id'],
-                ['name', 'provider', 'connection', 'context_window', 'max_tokens', 'capabilities', 'is_active', 'lifecycle_status', 'synced_at', 'updated_at']
+                ['name', 'provider', 'connection', 'context_window', 'max_tokens', 'capabilities', 'input_modalities', 'is_active', 'lifecycle_status', 'synced_at', 'updated_at']
             );
         }
 
@@ -346,13 +347,14 @@ class BedrockManager
                 ->orderBy('name')
                 ->get()
                 ->map(fn ($row) => [
-                    'model_id'       => $row->model_id,
-                    'name'           => $row->name,
-                    'provider'       => $row->provider,
-                    'context_window' => $row->context_window,
-                    'max_tokens'     => $row->max_tokens,
-                    'capabilities'   => json_decode($row->capabilities, true) ?? [],
-                    'is_active'      => (bool) $row->is_active,
+                    'model_id'         => $row->model_id,
+                    'name'             => $row->name,
+                    'provider'         => $row->provider,
+                    'context_window'   => $row->context_window,
+                    'max_tokens'       => $row->max_tokens,
+                    'capabilities'     => json_decode($row->capabilities, true) ?? [],
+                    'input_modalities' => json_decode($row->input_modalities ?? 'null', true) ?? ['text'],
+                    'is_active'        => (bool) $row->is_active,
                 ])
                 ->all();
         } catch (\Throwable) {

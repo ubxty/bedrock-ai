@@ -11,6 +11,7 @@ class ModelsCommand extends Command
                             {--connection= : Connection name}
                             {--filter= : Filter models by name or ID}
                             {--provider= : Filter by model provider (e.g., anthropic, amazon, meta)}
+                            {--legacy : Include legacy/deprecated models}
                             {--json : Output as JSON}';
 
     protected $description = 'List available foundation models from AWS Bedrock';
@@ -60,13 +61,22 @@ class ModelsCommand extends Command
 
         $models = array_values($models);
 
+        // Filter legacy models unless --legacy is passed
+        $showLegacy = $this->option('legacy');
+        if (! $showLegacy) {
+            $models = array_values(array_filter($models, fn ($m) => $m['is_active']));
+        }
+
         if ($this->option('json')) {
             $this->line(json_encode($models, JSON_PRETTY_PRINT));
 
             return 0;
         }
 
-        $this->info('Found ' . count($models) . ' models.');
+        $this->info('Found ' . count($models) . ($showLegacy ? ' models (including legacy).' : ' active models.'));
+        if (! $showLegacy) {
+            $this->line('<fg=gray>  Pass --legacy to include deprecated models.</>');  
+        }
         $this->newLine();
 
         // Group by provider prefix
@@ -96,18 +106,29 @@ class ModelsCommand extends Command
             $this->info("  {$provider} (" . count($providerModels) . ' models)');
 
             $rows = array_map(function ($model) {
+                $ctx = number_format($model['context_window'] / 1000) . 'k';
+
+                $inputs = $model['input_modalities'] ?? ['text'];
+                $inputTags = [];
+                if (in_array('image', $inputs, true)) {
+                    $inputTags[] = 'img';
+                }
+                if (in_array('document', $inputs, true)) {
+                    $inputTags[] = 'pdf';
+                }
+
                 return [
                     $model['name'],
-                    strlen($model['model_id']) > 50 ? substr($model['model_id'], 0, 47) . '...' : $model['model_id'],
-                    number_format($model['context_window']),
-                    number_format($model['max_tokens']),
+                    $model['model_id'],
+                    $ctx,
                     implode(', ', $model['capabilities']),
-                    $model['is_active'] ? '✓' : '✗',
+                    ! empty($inputTags) ? implode(', ', $inputTags) : '—',
+                    $model['is_active'] ? '✓' : '—',
                 ];
             }, $providerModels);
 
             $this->table(
-                ['Name', 'Model ID', 'Context', 'Max Tokens', 'Capabilities', 'Active'],
+                ['Name', 'Model ID', 'Context', 'Output', 'Accepts', 'Active'],
                 $rows
             );
 

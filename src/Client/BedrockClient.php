@@ -168,6 +168,7 @@ class BedrockClient
                 'context_window' => $model['contextWindow'] ?? $specs['context_window'],
                 'max_tokens' => $model['maxTokens'] ?? $specs['max_tokens'],
                 'capabilities' => array_map('strtolower', $model['outputModalities'] ?? ['text']),
+                'input_modalities' => array_map('strtolower', $model['inputModalities'] ?? ['text']),
                 'is_active' => ($model['modelLifecycle']['status'] ?? 'ACTIVE') === 'ACTIVE',
                 'provider' => $model['providerName'] ?? '',
             ];

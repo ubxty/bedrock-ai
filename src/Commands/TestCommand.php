@@ -14,6 +14,7 @@ class TestCommand extends Command
                             {--max-tokens=200 : Max tokens for response}
                             {--all-keys : Test all configured credential keys}
                             {--sync : Sync models to database before picking}
+                            {--legacy : Include legacy/deprecated models in picker}
                             {--json : Output as JSON}';
 
     protected $description = 'Test AWS Bedrock connection and optionally invoke a model';
@@ -87,6 +88,7 @@ class TestCommand extends Command
     protected function pickModel(BedrockManager $manager, ?string $connection): ?string
     {
         $this->line('  <options=bold>Fetching available models...</>');
+        $showLegacy = $this->option('legacy');
 
         try {
             $grouped = $manager->getModelsGrouped($connection);
@@ -121,26 +123,36 @@ class TestCommand extends Command
             }
         }
 
+        // Filter legacy models unless --legacy is passed
+        if (! $showLegacy) {
+            foreach ($grouped as $provider => $models) {
+                $grouped[$provider] = array_values(
+                    array_filter($models, fn ($m) => $m['is_active'])
+                );
+            }
+            $grouped = array_filter($grouped, fn ($models) => ! empty($models));
+        }
+
         $totalModels = array_sum(array_map('count', $grouped));
-        $this->info("  Found {$totalModels} models across " . count($grouped) . ' providers.');
+
+        if (! $showLegacy) {
+            $this->info("  Found {$totalModels} active models across " . count($grouped) . ' providers.');
+            $this->line('  <fg=gray>Pass --legacy to include deprecated models.</>');
+        } else {
+            $this->info("  Found {$totalModels} models (including legacy) across " . count($grouped) . ' providers.');
+        }
+
         $this->newLine();
 
         // ── Step 1: choose provider ───────────────────────────────
         $providers = array_keys($grouped);
         $providerChoices = array_map(function (string $provider) use ($grouped) {
-            $count     = count($grouped[$provider]);
-            $activeCount = count(array_filter($grouped[$provider], fn ($m) => $m['is_active']));
+            $count = count($grouped[$provider]);
 
-            return "{$provider}  ({$activeCount} active / {$count} total)";
+            return "{$provider} ({$count} models)";
         }, $providers);
 
-        $providerLabel = $this->choice(
-            '  Select a provider',
-            $providerChoices,
-            0
-        );
-
-        // Resolve back to clean key
+        $providerLabel = $this->choice('  Select a provider', $providerChoices, 0);
         $providerIndex = array_search($providerLabel, $providerChoices, true);
         $provider      = $providers[$providerIndex];
         $models        = $grouped[$provider];
@@ -148,29 +160,38 @@ class TestCommand extends Command
         // ── Step 2: choose model ──────────────────────────────────
         $this->newLine();
 
-        // Build display lines: pad model name for alignment
-        $maxNameLen = max(array_map(fn ($m) => strlen($m['name']), $models));
+        $nameCounts   = array_count_values(array_column($models, 'name'));
+        $modelChoices = array_map(function (array $model) use ($nameCounts) {
+            $ctx   = number_format($model['context_window'] / 1000) . 'k';
+            $label = "{$model['name']} — {$ctx} context";
 
-        $modelChoices = array_map(function (array $model) use ($maxNameLen) {
-            $status  = $model['is_active'] ? '<fg=green>active</>' : '<fg=yellow>legacy</>';
-            $ctx     = number_format($model['context_window'] / 1000) . 'k ctx';
-            $name    = str_pad($model['name'], min($maxNameLen, 50));
+            $inputs = $model['input_modalities'] ?? ['text'];
+            $tags = [];
+            if (in_array('image', $inputs, true)) {
+                $tags[] = 'img';
+            }
+            if (in_array('document', $inputs, true)) {
+                $tags[] = 'pdf';
+            }
+            if (! empty($tags)) {
+                $label .= '  [' . implode(', ', $tags) . ']';
+            }
 
-            return "{$name}  │  {$model['model_id']}  │  {$ctx}  │  {$status}";
+            if ($nameCounts[$model['name']] > 1) {
+                $shortId = preg_replace('/^[^.]+\./', '', $model['model_id']);
+                $label .= "  ({$shortId})";
+            }
+
+            return $label;
         }, $models);
 
-        // Strip ANSI for choice() since terminal decorators vary
-        $plainChoices = array_map(fn ($c) => strip_tags($c), $modelChoices);
+        $chosen     = $this->choice('  Select a model', $modelChoices, 0);
+        $modelIndex = array_search($chosen, $modelChoices, true);
+        $selected   = $models[$modelIndex];
 
-        $chosen = $this->choice(
-            '  Select a model',
-            $plainChoices,
-            0
-        );
+        $this->line("  <fg=gray>Model ID: {$selected['model_id']}</>");
 
-        $modelIndex = array_search($chosen, $plainChoices, true);
-
-        return $models[$modelIndex]['model_id'];
+        return $selected['model_id'];
     }
 
     // ─────────────────────────────────────────────────────────────────

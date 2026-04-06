@@ -11,6 +11,7 @@ class DefaultModelCommand extends Command
     protected $signature = 'bedrock:default-model
                             {--show    : Show current default models}
                             {--reset   : Clear both default models}
+                            {--legacy  : Include legacy/deprecated models in picker}
                             {--connection= : Use a specific connection}';
 
     protected $description = 'Set or show the default Bedrock chat and image models';
@@ -185,6 +186,7 @@ class DefaultModelCommand extends Command
     protected function pickModel(BedrockManager $manager, ?string $connection, ?string $capability = null, ?string $context = null): ?string
     {
         $this->line('  <options=bold>Fetching available models...</>');
+        $showLegacy = $this->option('legacy');
 
         try {
             $grouped = $manager->getModelsGrouped($connection, $context);
@@ -204,7 +206,7 @@ class DefaultModelCommand extends Command
                     $count = $manager->syncModels($connection);
                     if ($count > 0) {
                         $this->info("  ✓ Synced {$count} models.");
-                        $grouped = $manager->getModelsGrouped($connection);
+                        $grouped = $manager->getModelsGrouped($connection, $context);
                     } else {
                         $this->warn('  Sync returned 0 models (bearer tokens cannot access the model listing endpoint).');
                         $this->line('  <fg=gray>Enter the model ID manually instead — e.g. amazon.nova-lite-v1:0</>');
@@ -236,17 +238,33 @@ class DefaultModelCommand extends Command
             }
         }
 
+        // Filter legacy models unless --legacy is passed
+        if (! $showLegacy) {
+            foreach ($grouped as $provider => $models) {
+                $grouped[$provider] = array_values(
+                    array_filter($models, fn ($m) => $m['is_active'])
+                );
+            }
+            $grouped = array_filter($grouped, fn ($models) => ! empty($models));
+        }
+
         $totalModels = array_sum(array_map('count', $grouped));
-        $this->info("  Found {$totalModels} models across " . count($grouped) . ' providers.');
+
+        if (! $showLegacy) {
+            $this->info("  Found {$totalModels} active models across " . count($grouped) . ' providers.');
+            $this->line('  <fg=gray>Pass --legacy to include deprecated models.</>');
+        } else {
+            $this->info("  Found {$totalModels} models (including legacy) across " . count($grouped) . ' providers.');
+        }
+
         $this->newLine();
 
         // ── Step 1: choose provider ───────────────────────────────
         $providers = array_keys($grouped);
         $providerChoices = array_map(function (string $provider) use ($grouped) {
-            $count       = count($grouped[$provider]);
-            $activeCount = count(array_filter($grouped[$provider], fn ($m) => $m['is_active']));
+            $count = count($grouped[$provider]);
 
-            return "{$provider}  ({$activeCount} active / {$count} total)";
+            return "{$provider} ({$count} models)";
         }, $providers);
 
         $providerLabel = $this->choice('  Select a provider', $providerChoices, 0);
@@ -257,18 +275,37 @@ class DefaultModelCommand extends Command
         // ── Step 2: choose model ──────────────────────────────────
         $this->newLine();
 
-        $maxNameLen   = max(array_map(fn ($m) => strlen($m['name']), $models));
-        $modelChoices = array_map(function (array $model) use ($maxNameLen) {
-            $status = $model['is_active'] ? '<fg=green>active</>' : '<fg=yellow>legacy</>';
-            $ctx    = number_format($model['context_window'] / 1000) . 'k ctx';
-            $name   = str_pad($model['name'], min($maxNameLen, 50));
+        $nameCounts   = array_count_values(array_column($models, 'name'));
+        $modelChoices = array_map(function (array $model) use ($nameCounts) {
+            $ctx   = number_format($model['context_window'] / 1000) . 'k';
+            $label = "{$model['name']} — {$ctx} context";
 
-            return "{$name}  │  {$model['model_id']}  │  {$ctx}  │  {$status}";
+            $inputs = $model['input_modalities'] ?? ['text'];
+            $tags = [];
+            if (in_array('image', $inputs, true)) {
+                $tags[] = 'img';
+            }
+            if (in_array('document', $inputs, true)) {
+                $tags[] = 'pdf';
+            }
+            if (! empty($tags)) {
+                $label .= '  [' . implode(', ', $tags) . ']';
+            }
+
+            if ($nameCounts[$model['name']] > 1) {
+                $shortId = preg_replace('/^[^.]+\./', '', $model['model_id']);
+                $label .= "  ({$shortId})";
+            }
+
+            return $label;
         }, $models);
 
         $modelLabel = $this->choice('  Select a model', $modelChoices, 0);
         $modelIndex = array_search($modelLabel, $modelChoices, true);
+        $selected   = $models[$modelIndex];
 
-        return $models[$modelIndex]['model_id'];
+        $this->line("  <fg=gray>Model ID: {$selected['model_id']}</>");
+
+        return $selected['model_id'];
     }
 }
