@@ -145,6 +145,21 @@ class InferenceProfileResolverTest extends TestCase
         $this->assertSame('us.custom.model-v1', $resolved);
     }
 
+    public function testDoesNotDoublePrefixAlreadyResolvedIds(): void
+    {
+        $alreadyPrefixed = [
+            'us.anthropic.claude-3-5-sonnet-20241022-v2:0',
+            'eu.anthropic.claude-3-5-sonnet-20241022-v2:0',
+            'us.amazon.nova-pro-v1:0',
+            'eu.meta.llama4-scout-17b-16e-instruct-v1:0',
+        ];
+
+        foreach ($alreadyPrefixed as $modelId) {
+            $resolved = InferenceProfileResolver::resolve($modelId, 'us-east-1');
+            $this->assertSame($modelId, $resolved, "Already-prefixed model {$modelId} should not get double-prefixed");
+        }
+    }
+
     public function testAddPatternDoesNotDuplicate(): void
     {
         InferenceProfileResolver::addPattern('anthropic.claude-3-5-');

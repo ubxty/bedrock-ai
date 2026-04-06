@@ -3,7 +3,6 @@
 namespace Ubxty\BedrockAi\Client;
 
 use Aws\Bedrock\BedrockClient as AwsBedrockClient;
-use Aws\BedrockRuntime\BedrockRuntimeClient;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -15,15 +14,9 @@ use Ubxty\BedrockAi\Models\ModelSpecResolver;
 
 class BedrockClient
 {
-    protected CredentialManager $credentials;
-
-    protected int $maxRetries;
-
-    protected int $baseDelay;
+    use HasRetryLogic;
 
     protected string $anthropicVersion;
-
-    protected ?BedrockRuntimeClient $sdkClient = null;
 
     protected int $modelsCacheTtl = 3600;
 
@@ -41,6 +34,7 @@ class BedrockClient
 
     /**
      * Invoke a Bedrock model with automatic key rotation and retry.
+     * Internally delegates to the Converse API for provider-agnostic support.
      *
      * @return array{response: string, input_tokens: int, output_tokens: int, total_tokens: int, cost: float, latency_ms: int, status: string, key_used: string, model_id: string}
      */
@@ -53,95 +47,30 @@ class BedrockClient
         ?array $pricing = null
     ): array {
         $startTime = microtime(true);
-        $this->credentials->reset();
-        $maxKeyAttempts = $this->credentials->count();
-        $keyAttempt = 0;
 
-        while ($keyAttempt < $maxKeyAttempts) {
-            $retryAttempt = 0;
+        $converseClient = new ConverseClient($this->credentials, $this->maxRetries, $this->baseDelay);
 
-            while ($retryAttempt <= $this->maxRetries) {
-                try {
-                    $key = $this->credentials->current();
-                    $region = $key['region'] ?? 'us-east-1';
-                    $resolvedModelId = InferenceProfileResolver::resolve($modelId, $region);
+        $result = $converseClient->converse(
+            $modelId,
+            [['role' => 'user', 'content' => $userMessage]],
+            $systemPrompt,
+            $maxTokens,
+            $temperature,
+        );
 
-                    if ($this->credentials->isBearerMode()) {
-                        return $this->invokeHttp(
-                            $resolvedModelId, $systemPrompt, $userMessage,
-                            $maxTokens, $temperature, $startTime, $pricing
-                        );
-                    }
+        $cost = $this->calculateCost($result['input_tokens'], $result['output_tokens'], $pricing);
 
-                    return $this->invokeSdk(
-                        $resolvedModelId, $systemPrompt, $userMessage,
-                        $maxTokens, $temperature, $startTime, $pricing
-                    );
-                } catch (\Exception $e) {
-                    $errorMessage = $e->getMessage();
-                    $isRateLimited = $this->isRateLimitError($errorMessage);
-
-                    if ($isRateLimited && $retryAttempt < $this->maxRetries) {
-                        $waitTime = (int) pow($this->baseDelay, $retryAttempt + 1);
-                        Log::warning("Bedrock rate limited, waiting {$waitTime}s before retry", [
-                            'attempt' => $retryAttempt + 1,
-                            'key_label' => $this->credentials->current()['label'] ?? 'Unknown',
-                        ]);
-                        sleep($waitTime);
-                        $retryAttempt++;
-
-                        continue;
-                    }
-
-                    // Try next key
-                    $this->sdkClient = null;
-
-                    if ($this->credentials->next()) {
-                        Log::warning('Bedrock call failed, trying next key', [
-                            'error' => $errorMessage,
-                            'key_label' => $key['label'] ?? 'Unknown',
-                        ]);
-
-                        if (function_exists('event')) {
-                            event(new BedrockKeyRotated(
-                                fromKeyLabel: $key['label'] ?? 'Unknown',
-                                toKeyLabel: $this->credentials->current()['label'] ?? 'Unknown',
-                                reason: $errorMessage,
-                                modelId: $modelId,
-                            ));
-                        }
-
-                        break;
-                    }
-
-                    // All keys exhausted
-                    if ($isRateLimited) {
-                        if (function_exists('event')) {
-                            event(new BedrockRateLimited(
-                                modelId: $modelId,
-                                keyLabel: $key['label'] ?? 'Unknown',
-                                retryAttempt: $retryAttempt,
-                                waitSeconds: 0,
-                            ));
-                        }
-
-                        throw new RateLimitException(
-                            'AI service is temporarily busy. Please wait a moment and try again.',
-                            429, $e, $modelId, $key['label'] ?? null
-                        );
-                    }
-
-                    throw new BedrockException(
-                        self::extractUserFriendlyError($errorMessage),
-                        0, $e, $modelId, $key['label'] ?? null
-                    );
-                }
-            }
-
-            $keyAttempt++;
-        }
-
-        throw new BedrockException('AI service unavailable. All credential keys exhausted.', 0, null, $modelId);
+        return [
+            'response' => $result['response'],
+            'input_tokens' => $result['input_tokens'],
+            'output_tokens' => $result['output_tokens'],
+            'total_tokens' => $result['total_tokens'],
+            'cost' => $cost,
+            'latency_ms' => (int) ((microtime(true) - $startTime) * 1000),
+            'status' => 'success',
+            'key_used' => $result['key_used'],
+            'model_id' => $result['model_id'],
+        ];
     }
 
     /**
@@ -234,76 +163,39 @@ class BedrockClient
         return $this->credentials;
     }
 
-    // ───────────────────────────────────────────────────────────
-    //  Private: SDK invocation
-    // ───────────────────────────────────────────────────────────
-
-    protected function invokeSdk(
-        string $modelId,
-        string $systemPrompt,
-        string $userMessage,
-        int $maxTokens,
-        float $temperature,
-        float $startTime,
-        ?array $pricing
-    ): array {
-        $client = $this->getSdkClient();
-        $isTitan = str_contains($modelId, 'titan');
-
-        $body = $isTitan
-            ? $this->buildTitanBody($userMessage, $maxTokens, $temperature)
-            : $this->buildClaudeBody($systemPrompt, $userMessage, $maxTokens, $temperature);
-
-        $response = $client->invokeModel([
-            'modelId' => $modelId,
-            'contentType' => 'application/json',
-            'accept' => 'application/json',
-            'body' => json_encode($body),
+    /**
+     * Dispatch key rotation events and log warnings.
+     */
+    protected function onKeyRotated(array $fromKey, array $toKey, string $reason, string $modelId): void
+    {
+        Log::warning('Bedrock call failed, trying next key', [
+            'error' => $reason,
+            'key_label' => $fromKey['label'] ?? 'Unknown',
         ]);
 
-        $responseBody = json_decode($response['body']->getContents(), true);
-
-        return $this->parseResponse($responseBody, $modelId, $startTime, $pricing);
+        if (function_exists('event')) {
+            event(new BedrockKeyRotated(
+                fromKeyLabel: $fromKey['label'] ?? 'Unknown',
+                toKeyLabel: $toKey['label'] ?? 'Unknown',
+                reason: $reason,
+                modelId: $modelId,
+            ));
+        }
     }
 
-    protected function invokeHttp(
-        string $modelId,
-        string $systemPrompt,
-        string $userMessage,
-        int $maxTokens,
-        float $temperature,
-        float $startTime,
-        ?array $pricing
-    ): array {
-        $key = $this->credentials->current();
-        $region = $key['region'] ?? 'us-east-1';
-        $bearerToken = $this->credentials->getBearerToken();
-
-        $url = "https://bedrock-runtime.{$region}.amazonaws.com/model/{$modelId}/invoke";
-        $isTitan = str_contains($modelId, 'titan');
-
-        $body = $isTitan
-            ? $this->buildTitanBody($userMessage, $maxTokens, $temperature)
-            : $this->buildClaudeBody($systemPrompt, $userMessage, $maxTokens, $temperature);
-
-        $response = Http::withHeaders([
-            'Authorization' => 'Bearer ' . $bearerToken,
-            'Content-Type' => 'application/json',
-            'Accept' => 'application/json',
-            'X-Amz-Bedrock-Region' => $region,
-        ])->post($url, $body);
-
-        if (! $response->successful()) {
-            $status = $response->status();
-
-            if ($status === 429) {
-                throw new RateLimitException('429 Too many requests - rate limited', 429);
-            }
-
-            throw new BedrockException("Bedrock HTTP Error: {$status} - {$response->body()}", $status);
+    /**
+     * Dispatch rate limit exhaustion events.
+     */
+    protected function onRateLimitExhausted(string $modelId, array $key, int $retryAttempt): void
+    {
+        if (function_exists('event')) {
+            event(new BedrockRateLimited(
+                modelId: $modelId,
+                keyLabel: $key['label'] ?? 'Unknown',
+                retryAttempt: $retryAttempt,
+                waitSeconds: 0,
+            ));
         }
-
-        return $this->parseResponse($response->json(), $modelId, $startTime, $pricing);
     }
 
     // ───────────────────────────────────────────────────────────
@@ -348,61 +240,8 @@ class BedrockClient
     }
 
     // ───────────────────────────────────────────────────────────
-    //  Private: Request/Response helpers
+    //  Private: Helpers
     // ───────────────────────────────────────────────────────────
-
-    protected function buildClaudeBody(string $systemPrompt, string $userMessage, int $maxTokens, float $temperature): array
-    {
-        return [
-            'anthropic_version' => $this->anthropicVersion,
-            'max_tokens' => $maxTokens,
-            'temperature' => $temperature,
-            'system' => $systemPrompt,
-            'messages' => [
-                ['role' => 'user', 'content' => $userMessage],
-            ],
-        ];
-    }
-
-    protected function buildTitanBody(string $userMessage, int $maxTokens, float $temperature): array
-    {
-        return [
-            'inputText' => $userMessage,
-            'textGenerationConfig' => [
-                'maxTokenCount' => $maxTokens,
-                'temperature' => $temperature,
-            ],
-        ];
-    }
-
-    protected function parseResponse(array $responseBody, string $modelId, float $startTime, ?array $pricing): array
-    {
-        $isTitan = str_contains($modelId, 'titan');
-
-        if ($isTitan) {
-            $content = $responseBody['results'][0]['outputText'] ?? '';
-            $inputTokens = $responseBody['inputTextTokenCount'] ?? 0;
-            $outputTokens = $responseBody['results'][0]['tokenCount'] ?? 0;
-        } else {
-            $content = $responseBody['content'][0]['text'] ?? '';
-            $inputTokens = $responseBody['usage']['input_tokens'] ?? 0;
-            $outputTokens = $responseBody['usage']['output_tokens'] ?? 0;
-        }
-
-        $cost = $this->calculateCost($inputTokens, $outputTokens, $pricing);
-
-        return [
-            'response' => $content,
-            'input_tokens' => $inputTokens,
-            'output_tokens' => $outputTokens,
-            'total_tokens' => $inputTokens + $outputTokens,
-            'cost' => $cost,
-            'latency_ms' => (int) ((microtime(true) - $startTime) * 1000),
-            'status' => 'success',
-            'key_used' => $this->credentials->current()['label'] ?? 'Primary',
-            'model_id' => $modelId,
-        ];
-    }
 
     protected function calculateCost(int $inputTokens, int $outputTokens, ?array $pricing): float
     {
@@ -413,32 +252,6 @@ class BedrockClient
             ($inputTokens / 1000) * $inputPrice + ($outputTokens / 1000) * $outputPrice,
             6
         );
-    }
-
-    protected function getSdkClient(): BedrockRuntimeClient
-    {
-        if (! $this->sdkClient) {
-            $key = $this->credentials->current();
-
-            $this->sdkClient = new BedrockRuntimeClient([
-                'version' => 'latest',
-                'region' => $key['region'] ?? 'us-east-1',
-                'credentials' => [
-                    'key' => $key['aws_key'],
-                    'secret' => $key['aws_secret'],
-                ],
-            ]);
-        }
-
-        return $this->sdkClient;
-    }
-
-    protected function isRateLimitError(string $message): bool
-    {
-        return str_contains($message, '429')
-            || str_contains($message, 'Too many requests')
-            || str_contains($message, 'ThrottlingException')
-            || str_contains($message, 'rate limit');
     }
 
     /**

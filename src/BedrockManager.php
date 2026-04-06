@@ -88,13 +88,14 @@ class BedrockManager
         string $userMessage,
         int $maxTokens = 4096,
         float $temperature = 0.7,
-        ?array $pricing = null
+        ?array $pricing = null,
+        ?string $connection = null
     ): array {
         $this->checkCostLimits();
 
         $modelId = $this->resolveAlias($modelId);
 
-        $result = $this->client()->invoke($modelId, $systemPrompt, $userMessage, $maxTokens, $temperature, $pricing);
+        $result = $this->client($connection)->invoke($modelId, $systemPrompt, $userMessage, $maxTokens, $temperature, $pricing);
 
         $this->trackCost($result['cost'] ?? 0);
         $this->fireInvokedEvent($result);
@@ -136,10 +137,19 @@ class BedrockManager
         string $systemPrompt = '',
         int $maxTokens = 4096,
         float $temperature = 0.7,
+        ?string $connection = null
     ): array {
+        $this->checkCostLimits();
+
         $modelId = $this->resolveAlias($modelId);
 
-        return $this->converseClient()->converse($modelId, $messages, $systemPrompt, $maxTokens, $temperature);
+        $result = $this->converseClient($connection)->converse($modelId, $messages, $systemPrompt, $maxTokens, $temperature);
+
+        $this->trackCost($result['cost'] ?? 0);
+        $this->fireInvokedEvent($result);
+        $this->getLogger()->log($result);
+
+        return $result;
     }
 
     /**
@@ -177,10 +187,19 @@ class BedrockManager
         callable $onChunk,
         int $maxTokens = 4096,
         float $temperature = 0.7,
+        ?string $connection = null
     ): array {
+        $this->checkCostLimits();
+
         $modelId = $this->resolveAlias($modelId);
 
-        return $this->streamingClient()->stream($modelId, $systemPrompt, $userMessage, $onChunk, $maxTokens, $temperature);
+        $result = $this->streamingClient($connection)->stream($modelId, $systemPrompt, $userMessage, $onChunk, $maxTokens, $temperature);
+
+        $this->trackCost($result['cost'] ?? 0);
+        $this->fireInvokedEvent($result);
+        $this->getLogger()->log($result);
+
+        return $result;
     }
 
     /**

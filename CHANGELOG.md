@@ -6,6 +6,40 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and 
 
 ---
 
+## [0.0.3] - 2026-04-06
+
+### Added
+
+- **`HasRetryLogic` trait** — Extracted shared retry loop, SDK client construction, and rate-limit detection from `BedrockClient`, `ConverseClient`, and `StreamingClient` into a single reusable trait, eliminating ~150 lines of code duplication.
+- **`connection` parameter on `invoke()`** — `BedrockManager::invoke()` now accepts an optional `?string $connection` parameter to target a specific named connection instead of always using the default.
+- **`connection` parameter on `converse()` and `stream()`** — Same named connection override, consistent with `invoke()`.
+- **Cost limits, events, and logging on `converse()` and `stream()`** — Both methods now call `checkCostLimits()`, `trackCost()`, `fireInvokedEvent()`, and `getLogger()->log()` — matching the guardrails that were previously only applied to `invoke()`.
+- **Double-prefix guard in `InferenceProfileResolver`** — `resolve()` now detects already-prefixed model IDs (e.g. `us.anthropic.claude-3-5-*`) and returns them unchanged, preventing malformed IDs like `us.us.anthropic.claude-3-5-*`.
+
+### Changed
+
+- **`BedrockClient::invoke()` delegates to Converse API** — Instead of maintaining separate `buildClaudeBody()` / `buildTitanBody()` / `parseResponse()` paths, `invoke()` now instantiates `ConverseClient` internally and calls `converse()`. This means all model providers (Claude, Titan, Llama, Mistral, Cohere, Nova) work through the single provider-agnostic Converse API.
+- **`ConverseClient` uses `HasRetryLogic` trait** — Replaced hand-written retry loop with `$this->withRetry()`.
+- **`StreamingClient` uses `HasRetryLogic` trait** — Replaced hand-written retry loop with `$this->withRetry()`.
+- **`BedrockClient` uses `HasRetryLogic` trait** — Shared SDK client construction and rate-limit detection now come from the trait; event hooks (`onKeyRotated`, `onRateLimitExhausted`) are overridden locally.
+
+### Removed
+
+- `BedrockClient::buildClaudeBody()` — superseded by Converse API delegation.
+- `BedrockClient::buildTitanBody()` — superseded by Converse API delegation.
+- `BedrockClient::parseResponse()` — superseded by Converse API delegation.
+- `BedrockClient::invokeSdk()` / `invokeHttp()` — superseded by internal `ConverseClient` call.
+- Duplicated `getSdkClient()` and `isRateLimitError()` from `ConverseClient` and `StreamingClient` (now in trait).
+
+### Fixed
+
+- **#1+#2**: `invoke()` failed for non-Claude/Titan models (Llama, Mistral, Cohere, Nova) because it used model-specific body builders. Now works for all providers via the Converse API.
+- **#4**: `InferenceProfileResolver::resolve()` double-prefixed already-resolved IDs (e.g. `us.anthropic.claude-3-5-*` → `us.us.anthropic.claude-3-5-*`).
+- **#6**: `BedrockManager::converse()` and `stream()` bypassed cost limit checks, cost tracking, event dispatching, and invocation logging.
+- **#7**: `BedrockManager::invoke()` was hardcoded to use the default connection with no way to specify an alternative.
+
+---
+
 ## [0.0.2] - 2026-04-06
 
 ### Added
@@ -69,4 +103,4 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and 
 - Custom exceptions: `BedrockException`, `RateLimitException`, `ConfigurationException`, `CostLimitExceededException`.
 - Laravel events: `BedrockInvoked`, `BedrockRateLimited`, `BedrockKeyRotated`.
 - CLI commands: `bedrock:configure`, `bedrock:test`, `bedrock:models`, `bedrock:usage`, `bedrock:pricing`.
-- 179 tests with 346 assertions.
+- 176 tests with 331 assertions.

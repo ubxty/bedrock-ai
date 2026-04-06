@@ -2,7 +2,6 @@
 
 namespace Ubxty\BedrockAi\Client;
 
-use Aws\BedrockRuntime\BedrockRuntimeClient;
 use Illuminate\Support\Facades\Http;
 use Ubxty\BedrockAi\Exceptions\BedrockException;
 use Ubxty\BedrockAi\Exceptions\RateLimitException;
@@ -13,13 +12,7 @@ use Ubxty\BedrockAi\Exceptions\RateLimitException;
  */
 class ConverseClient
 {
-    protected CredentialManager $credentials;
-
-    protected int $maxRetries;
-
-    protected int $baseDelay;
-
-    protected ?BedrockRuntimeClient $sdkClient = null;
+    use HasRetryLogic;
 
     public function __construct(
         CredentialManager $credentials,
@@ -45,96 +38,50 @@ class ConverseClient
         float $temperature = 0.7,
     ): array {
         $startTime = microtime(true);
-        $this->credentials->reset();
-        $maxKeyAttempts = $this->credentials->count();
-        $keyAttempt = 0;
 
-        while ($keyAttempt < $maxKeyAttempts) {
-            $retryAttempt = 0;
-
-            while ($retryAttempt <= $this->maxRetries) {
-                try {
-                    $key = $this->credentials->current();
-                    $region = $key['region'] ?? 'us-east-1';
-                    $resolvedModelId = InferenceProfileResolver::resolve($modelId, $region);
-
-                    if ($this->credentials->isBearerMode()) {
-                        return $this->converseHttp(
-                            $resolvedModelId, $messages, $systemPrompt,
-                            $maxTokens, $temperature, $startTime
-                        );
-                    }
-
-                    $client = $this->getSdkClient();
-
-                    $params = [
-                        'modelId' => $resolvedModelId,
-                        'messages' => $this->formatMessages($messages),
-                        'inferenceConfig' => [
-                            'maxTokens' => $maxTokens,
-                            'temperature' => $temperature,
-                        ],
-                    ];
-
-                    if ($systemPrompt !== '') {
-                        $params['system'] = [
-                            ['text' => $systemPrompt],
-                        ];
-                    }
-
-                    $result = $client->converse($params);
-
-                    $outputText = $result['output']['message']['content'][0]['text'] ?? '';
-                    $inputTokens = $result['usage']['inputTokens'] ?? 0;
-                    $outputTokens = $result['usage']['outputTokens'] ?? 0;
-                    $stopReason = $result['stopReason'] ?? 'end_turn';
-
-                    return [
-                        'response' => $outputText,
-                        'input_tokens' => $inputTokens,
-                        'output_tokens' => $outputTokens,
-                        'total_tokens' => $inputTokens + $outputTokens,
-                        'stop_reason' => $stopReason,
-                        'latency_ms' => (int) ((microtime(true) - $startTime) * 1000),
-                        'model_id' => $resolvedModelId,
-                        'key_used' => $key['label'] ?? 'Primary',
-                    ];
-                } catch (\Exception $e) {
-                    $errorMessage = $e->getMessage();
-                    $isRateLimited = $this->isRateLimitError($errorMessage);
-
-                    if ($isRateLimited && $retryAttempt < $this->maxRetries) {
-                        $waitTime = (int) pow($this->baseDelay, $retryAttempt + 1);
-                        sleep($waitTime);
-                        $retryAttempt++;
-
-                        continue;
-                    }
-
-                    $this->sdkClient = null;
-
-                    if ($this->credentials->next()) {
-                        break;
-                    }
-
-                    if ($isRateLimited) {
-                        throw new RateLimitException(
-                            'AI service is temporarily busy. Please wait a moment and try again.',
-                            429, $e, $modelId, $key['label'] ?? null
-                        );
-                    }
-
-                    throw new BedrockException(
-                        BedrockClient::extractUserFriendlyError($errorMessage),
-                        0, $e, $modelId, $key['label'] ?? null
-                    );
-                }
+        return $this->withRetry($modelId, function (string $resolvedModelId, array $key) use ($messages, $systemPrompt, $maxTokens, $temperature, $startTime) {
+            if ($this->credentials->isBearerMode()) {
+                return $this->converseHttp(
+                    $resolvedModelId, $messages, $systemPrompt,
+                    $maxTokens, $temperature, $startTime
+                );
             }
 
-            $keyAttempt++;
-        }
+            $client = $this->getSdkClient();
 
-        throw new BedrockException('AI service unavailable. All credential keys exhausted.', 0, null, $modelId);
+            $params = [
+                'modelId' => $resolvedModelId,
+                'messages' => $this->formatMessages($messages),
+                'inferenceConfig' => [
+                    'maxTokens' => $maxTokens,
+                    'temperature' => $temperature,
+                ],
+            ];
+
+            if ($systemPrompt !== '') {
+                $params['system'] = [
+                    ['text' => $systemPrompt],
+                ];
+            }
+
+            $result = $client->converse($params);
+
+            $outputText = $result['output']['message']['content'][0]['text'] ?? '';
+            $inputTokens = $result['usage']['inputTokens'] ?? 0;
+            $outputTokens = $result['usage']['outputTokens'] ?? 0;
+            $stopReason = $result['stopReason'] ?? 'end_turn';
+
+            return [
+                'response' => $outputText,
+                'input_tokens' => $inputTokens,
+                'output_tokens' => $outputTokens,
+                'total_tokens' => $inputTokens + $outputTokens,
+                'stop_reason' => $stopReason,
+                'latency_ms' => (int) ((microtime(true) - $startTime) * 1000),
+                'model_id' => $resolvedModelId,
+                'key_used' => $key['label'] ?? 'Primary',
+            ];
+        });
     }
 
     /**
@@ -219,31 +166,5 @@ class ConverseClient
             'model_id' => $modelId,
             'key_used' => $key['label'] ?? 'Primary',
         ];
-    }
-
-    protected function getSdkClient(): BedrockRuntimeClient
-    {
-        if (! $this->sdkClient) {
-            $key = $this->credentials->current();
-
-            $this->sdkClient = new BedrockRuntimeClient([
-                'version' => 'latest',
-                'region' => $key['region'] ?? 'us-east-1',
-                'credentials' => [
-                    'key' => $key['aws_key'],
-                    'secret' => $key['aws_secret'],
-                ],
-            ]);
-        }
-
-        return $this->sdkClient;
-    }
-
-    protected function isRateLimitError(string $message): bool
-    {
-        return str_contains($message, '429')
-            || str_contains($message, 'Too many requests')
-            || str_contains($message, 'ThrottlingException')
-            || str_contains($message, 'rate limit');
     }
 }

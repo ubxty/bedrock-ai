@@ -29,6 +29,11 @@ class InferenceProfileResolver
         // Strip context window suffixes (e.g., :48k, :200k) that are for display only
         $modelId = preg_replace('/:\d+k$/', '', $modelId);
 
+        // Guard: don't double-prefix already-resolved IDs (e.g., us.anthropic.claude-...)
+        if (preg_match('/^(us|eu)\./', $modelId)) {
+            return $modelId;
+        }
+
         foreach (static::$inferenceProfilePatterns as $pattern) {
             if (str_starts_with($modelId, $pattern)) {
                 $regionPrefix = str_starts_with($region, 'eu-') ? 'eu' : 'us';
