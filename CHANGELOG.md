@@ -6,6 +6,45 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and 
 
 ---
 
+## [0.0.7] - 2026-04-06
+
+### Added
+
+- **`bedrock:default-model` command (replaces `bedrock:model`)** — Completely rewritten interactive wizard that now sets both chat and image default models. Features a two-step provider→model picker, test-before-set confirmation, capability-based filtering (image models only shown for image selection), and `--show` / `--reset` / `--connection=` flags.
+- **`BedrockManager::defaultImageModel()`** — Returns the configured default image model from `BEDROCK_DEFAULT_IMAGE_MODEL` env.
+- **`BedrockManager::converseStream()`** — New manager-level method for multi-turn streaming conversations with full guardrails (cost limits, events, logging, cost calculation).
+- **`Providers` constants class** — Type-safe provider name constants (`Providers::ANTHROPIC`, `Providers::META`, etc.) for use in config and code, avoiding typos with space-containing names like `'AI21 Labs'`.
+- **`WritesEnvFile` trait** — Extracted shared `.env` write logic used by `ConfigureCommand` and `DefaultModelCommand`.
+- **Per-context provider filtering** — Config now supports `providers.chat.disabled_providers` and `providers.image.disabled_providers` for context-scoped filtering, in addition to the global `providers.disabled_providers`.
+- **`BEDROCK_DEFAULT_IMAGE_MODEL` env variable** — Configure a default image model in `.env`.
+- **`BEDROCK_DISABLED_PROVIDERS` env variable** — Comma-separated list of globally disabled providers via `.env`.
+- **`BEDROCK_CHAT_DISABLED_PROVIDERS` / `BEDROCK_IMAGE_DISABLED_PROVIDERS` env variables** — Context-scoped provider filtering via `.env`.
+
+### Changed
+
+- **`getModelsGrouped()` accepts `?string $context` parameter** — Pass `'chat'` or `'image'` to apply context-scoped provider filtering in addition to global disabled list.
+- **`converse()` and `stream()` now accept `?array $pricing`** — Pricing arrays can be passed for accurate cost calculation, matching `invoke()` behavior.
+- **`converse()` and `stream()` now calculate and return cost** — Both methods compute cost from token counts and include a `cost` key in the result array (previously always `$0`).
+- **`ConversationBuilder::send()` routes through `BedrockManager::converse()`** — Applies cost limits, event dispatching, logging, and cost calculation. Previously bypassed all manager guardrails by calling `ConverseClient` directly.
+- **`ConversationBuilder::sendStream()` routes through `BedrockManager::converseStream()`** — Same guardrail fix for streaming.
+- **`ConversationBuilder::withPricing()` now flows through to cost calculation** — Pricing is passed to the manager for accurate cost tracking (previously only used by `estimate()`).
+- **Facade PHPDoc annotations updated** — `invoke()`, `converse()`, `stream()` now include `?string $connection` and `?array $pricing` parameters. New `converseStream()` annotation added.
+- `config/bedrock.php` `defaults` section now includes `'image_model' => env('BEDROCK_DEFAULT_IMAGE_MODEL', '')`.
+- `config/bedrock.php` now has full `providers` section with global, chat, and image disabled provider lists.
+
+### Fixed
+
+- **ConversationBuilder bypassed Manager guardrails** (BUGS2 #1, High) — `send()` and `sendStream()` called client classes directly, skipping cost limits, cost tracking, event dispatching, and invocation logging.
+- **`converse()` / `stream()` always tracked $0 cost** (BUGS2 #2, High) — `ConverseClient` and `StreamingClient` did not return a `cost` key; `BedrockManager` now calculates cost from token counts.
+- **`syncModels()` threw raw SQL exception on missing migration** (BUGS2 #4) — Now checks `Schema::hasTable()` first with a clear error message.
+- **`ModelsCommand` ignored `disabled_providers` config** (BUGS2 #7) — Output now respects the configured disabled providers filter.
+- **`ConverseClient` / `StreamingClient` silently swallowed key rotation and rate limit events** (BUGS2 #8) — Both now override `onKeyRotated()` and `onRateLimitExhausted()` to dispatch `BedrockKeyRotated` and `BedrockRateLimited` events.
+- **Duplicate `writeEnv()` in two commands** (BUGS2 #6) — Extracted to shared `WritesEnvFile` trait.
+- **Bearer token model listing 403** — `BedrockClient::listModels()` now catches 403 errors from bearer tokens (management-plane access restricted) and returns an empty list instead of throwing.
+- **`config:clear` after `bedrock:configure`** — Wizard now automatically clears the config cache so updated `.env` values take effect immediately.
+
+---
+
 ## [0.0.6] - 2026-04-06
 
 ### Fixed
