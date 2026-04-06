@@ -6,6 +6,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and 
 
 ---
 
+## [0.0.9] - 2026-04-06
+
+### Changed
+
+- **`bedrock:chat` respects `disabled_providers` config** — Model list in the chat command now filters out providers listed in `providers.disabled_providers` and `providers.chat.disabled_providers`, consistent with other commands.
+- **`bedrock:chat` prompts before model selection** — When a default chat model is configured, the command now asks "Use default model?" (defaulting to yes) before showing the full model picker, skipping the picker entirely if the user accepts the default.
+- **`bedrock:default-model` always asks before setting image model** — Image model selection is now opt-in (defaults to no), so running the command without needing an image model no longer forces the user through the image picker.
+
+---
+
 ## [0.0.8] - 2026-04-06
 
 ### Added
