@@ -151,63 +151,24 @@ class ChatCommand extends Command
 
             // /image <path> [prompt] — analyse an image file
             if (str_starts_with($command, '/image ')) {
-                $args = trim(substr($input, 7));
-                $imagePath = null;
-                $imagePrompt = 'Describe this image in detail.';
+                $this->handleFileCommand(
+                    $input, 7, 'image',
+                    ['jpg', 'jpeg', 'png', 'gif', 'webp'],
+                    'Describe this image in detail.',
+                    $conversation, $manager, $connection, $useStreaming,
+                );
 
-                // Split: first token is path, rest is prompt
-                if (preg_match('/^("(?<quoted>[^"]+)"|(?<bare>\S+))\s*(?<prompt>.*)$/s', $args, $m)) {
-                    $imagePath = $m['quoted'] ?: $m['bare'];
-                    if (! empty(trim($m['prompt']))) {
-                        $imagePrompt = trim($m['prompt']);
-                    }
-                }
+                continue;
+            }
 
-                if (! $imagePath || ! is_file($imagePath)) {
-                    $this->error('  File not found: ' . ($imagePath ?: '(none)'));
-                    $this->line('  <fg=gray>Usage: /image /path/to/file.png [optional prompt]</>');
-
-                    continue;
-                }
-
-                $ext = strtolower(pathinfo($imagePath, PATHINFO_EXTENSION));
-                if (! in_array($ext, ['jpg', 'jpeg', 'png', 'gif', 'webp'])) {
-                    $this->error("  Unsupported image format: .{$ext}");
-                    $this->line('  <fg=gray>Supported: jpg, jpeg, png, gif, webp</>');
-
-                    continue;
-                }
-
-                $sizeKb = round(filesize($imagePath) / 1024);
-                $this->line("  <fg=gray>Sending image: {$imagePath} ({$sizeKb} KB)</>"); 
-
-                try {
-                    $conversation->userWithImage($imagePrompt, $imagePath);
-
-                    $this->line('');
-                    $this->line('  <fg=cyan>Assistant</>');
-
-                    if ($useStreaming && ! $manager->client($connection)->getCredentialManager()->isBearerMode()) {
-                        $result = $this->sendStreaming($conversation);
-                    } else {
-                        $result = $this->sendBlocking($conversation);
-                    }
-
-                    $this->messageCount++;
-                    $this->totalInputTokens += $result['input_tokens'] ?? 0;
-                    $this->totalOutputTokens += $result['output_tokens'] ?? 0;
-                    $this->totalCost += $result['cost'] ?? 0;
-
-                    $this->newLine();
-                    $this->line(sprintf(
-                        '  <fg=gray>[%d in / %d out / %dms]</>',
-                        $result['input_tokens'] ?? 0,
-                        $result['output_tokens'] ?? 0,
-                        $result['latency_ms'] ?? 0,
-                    ));
-                } catch (\Exception $e) {
-                    $this->error('  Error: ' . $e->getMessage());
-                }
+            // /doc <path> [prompt] — analyse a document (PDF, CSV, DOCX, etc.)
+            if (str_starts_with($command, '/doc ')) {
+                $this->handleFileCommand(
+                    $input, 5, 'document',
+                    ['pdf', 'csv', 'doc', 'docx', 'xls', 'xlsx', 'html', 'htm', 'txt', 'md'],
+                    'Summarize this document.',
+                    $conversation, $manager, $connection, $useStreaming,
+                );
 
                 continue;
             }
@@ -312,6 +273,83 @@ class ChatCommand extends Command
         return $selection;
     }
 
+    /**
+     * Handle /image and /doc commands (shared logic).
+     */
+    protected function handleFileCommand(
+        string $input,
+        int $prefixLen,
+        string $type,
+        array $allowedExtensions,
+        string $defaultPrompt,
+        $conversation,
+        BedrockManager $manager,
+        ?string $connection,
+        bool $useStreaming,
+    ): void {
+        $args = trim(substr($input, $prefixLen));
+        $filePath = null;
+        $prompt = $defaultPrompt;
+
+        if (preg_match('/^("(?<quoted>[^"]+)"|(?<bare>\S+))\s*(?<prompt>.*)$/s', $args, $m)) {
+            $filePath = $m['quoted'] ?: $m['bare'];
+            if (! empty(trim($m['prompt']))) {
+                $prompt = trim($m['prompt']);
+            }
+        }
+
+        if (! $filePath || ! is_file($filePath)) {
+            $this->error('  File not found: ' . ($filePath ?: '(none)'));
+            $this->line("  <fg=gray>Usage: /{$type} /path/to/file [optional prompt]</>");
+
+            return;
+        }
+
+        $ext = strtolower(pathinfo($filePath, PATHINFO_EXTENSION));
+        if (! in_array($ext, $allowedExtensions)) {
+            $this->error("  Unsupported {$type} format: .{$ext}");
+            $this->line('  <fg=gray>Supported: ' . implode(', ', $allowedExtensions) . '</>');
+
+            return;
+        }
+
+        $sizeKb = round(filesize($filePath) / 1024);
+        $label = $type === 'image' ? 'image' : 'document';
+        $this->line("  <fg=gray>Sending {$label}: {$filePath} ({$sizeKb} KB)</>");
+
+        try {
+            if ($type === 'image') {
+                $conversation->userWithImage($prompt, $filePath);
+            } else {
+                $conversation->userWithDocument($prompt, $filePath);
+            }
+
+            $this->line('');
+            $this->line('  <fg=cyan>Assistant</>');
+
+            if ($useStreaming && ! $manager->client($connection)->getCredentialManager()->isBearerMode()) {
+                $result = $this->sendStreaming($conversation);
+            } else {
+                $result = $this->sendBlocking($conversation);
+            }
+
+            $this->messageCount++;
+            $this->totalInputTokens += $result['input_tokens'] ?? 0;
+            $this->totalOutputTokens += $result['output_tokens'] ?? 0;
+            $this->totalCost += $result['cost'] ?? 0;
+
+            $this->newLine();
+            $this->line(sprintf(
+                '  <fg=gray>[%d in / %d out / %dms]</>',
+                $result['input_tokens'] ?? 0,
+                $result['output_tokens'] ?? 0,
+                $result['latency_ms'] ?? 0,
+            ));
+        } catch (\Exception $e) {
+            $this->error('  Error: ' . $e->getMessage());
+        }
+    }
+
     protected function sendStreaming($conversation): array
     {
         $result = $conversation->sendStream(function (string $chunk) {
@@ -359,6 +397,8 @@ class ChatCommand extends Command
         $this->line('  <fg=yellow>/temp <0-1></>     Change temperature');
         $this->line('  <fg=yellow>/image <path> [prompt]</>');
         $this->line('                    Analyse an image (jpg/png/gif/webp)');
+        $this->line('  <fg=yellow>/doc <path> [prompt]</>');
+        $this->line('                    Analyse a document (pdf/csv/docx/xlsx/html/txt/md)');
     }
 
     protected function printStats(): void

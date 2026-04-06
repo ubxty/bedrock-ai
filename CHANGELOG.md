@@ -6,11 +6,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and 
 
 ---
 
-## [0.0.11] - 2026-04-06
+## [0.0.11] - 2026-04-07
 
 ### Added
 
 - **`/image` command in `bedrock:chat`** — Send `/image <path> [prompt]` during a chat session to analyse an image with the current model. Supports JPEG, PNG, GIF, and WebP. Quoted paths with spaces are supported. If no prompt is given, defaults to "Describe this image in detail."
+- **`/doc` command in `bedrock:chat`** — Send `/doc <path> [prompt]` to analyse a document (PDF, CSV, DOCX, XLSX, HTML, TXT, MD) with the current model. Tested and confirmed working with Amazon Nova Pro and Nova Lite. If no prompt is given, defaults to "Summarize this document."
 - **`ConversationBuilder::setMessages()`** — New method to replace the full message history directly, used internally for error recovery.
 
 ### Fixed
