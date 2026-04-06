@@ -86,9 +86,13 @@ class BedrockClient
             $models = $this->listModels();
             $responseTime = (int) ((microtime(true) - $startTime) * 1000);
 
+            $msg = count($models) > 0
+                ? 'Connection successful! Found ' . count($models) . ' available models.'
+                : 'Connection configured. Bearer token active (model listing requires IAM permissions — run `bedrock:models --sync` with IAM to populate the model list).';
+
             return [
                 'success' => true,
-                'message' => 'Connection successful! Found ' . count($models) . ' available models.',
+                'message' => $msg,
                 'response_time' => $responseTime,
                 'model_count' => count($models),
             ];
@@ -113,7 +117,22 @@ class BedrockClient
             $this->modelsCacheTtl,
             function () {
                 if ($this->credentials->isBearerMode()) {
-                    return $this->listModelsHttp();
+                    try {
+                        return $this->listModelsHttp();
+                    } catch (BedrockException $e) {
+                        // ABSK bearer tokens are scoped to the runtime inference plane.
+                        // The management-plane listing endpoint may return 403 — treat this
+                        // as "no models available" rather than a fatal error.
+                        if (str_contains($e->getMessage(), '403')) {
+                            Log::debug('Bedrock model listing returned 403 for bearer token; management-plane access may be restricted.', [
+                                'error' => $e->getMessage(),
+                            ]);
+
+                            return [];
+                        }
+
+                        throw $e;
+                    }
                 }
 
                 return $this->listModelsSdk();

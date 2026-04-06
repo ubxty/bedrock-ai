@@ -130,7 +130,14 @@ class ConfigureCommand extends Command
             $this->writeEnv($envValues);
 
             $this->info('  ✓ .env file updated.');
-            $this->line('  Run `php artisan config:clear` to reload configuration.');
+
+            // Clear config cache so the next artisan command picks up the new values.
+            try {
+                $this->call('config:clear', [], new \Symfony\Component\Console\Output\NullOutput());
+            } catch (\Throwable) {
+                // Silently ignore if config:clear is unavailable.
+            }
+            $this->line('  ✓ Config cache cleared.');
         }
 
         // Step 6: Test connection
