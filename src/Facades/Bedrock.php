@@ -25,7 +25,7 @@ use Ubxty\BedrockAi\BedrockManager;
  * @method static \Ubxty\BedrockAi\Logging\InvocationLogger getLogger()
  * @method static bool isBearerMode(?string $connection = null)
  * @method static int syncModels(?string $connection = null)
- * @method static array<string, array> getModelsGrouped(?string $connection = null)
+ * @method static array<string, array> getModelsGrouped(?string $connection = null, ?string $context = null)
  * @method static string defaultModel()
  * @method static string defaultImageModel()
  *

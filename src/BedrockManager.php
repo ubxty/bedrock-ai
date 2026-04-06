@@ -286,7 +286,10 @@ class BedrockManager
      *
      * @return array<string, array<int, array>> Keyed by provider slug
      */
-    public function getModelsGrouped(?string $connection = null): array
+    /**
+     * @param string|null $context  Optional context for context-scoped provider filtering: 'chat' or 'image'.
+     */
+    public function getModelsGrouped(?string $connection = null, ?string $context = null): array
     {
         try {
             $rows = \Illuminate\Support\Facades\DB::table('bedrock_models')
@@ -318,11 +321,13 @@ class BedrockManager
             $grouped[$provider][] = $model;
         }
 
-        // Remove providers that have been globally disabled in config.
-        $disabled = array_map(
-            'strtolower',
-            array_filter((array) ($this->config['providers']['disabled_providers'] ?? []))
-        );
+        // Build the effective disabled list: global + context-scoped (chat/image).
+        $globalDisabled = array_filter((array) ($this->config['providers']['disabled_providers'] ?? []));
+        $contextDisabled = $context
+            ? array_filter((array) ($this->config['providers'][$context]['disabled_providers'] ?? []))
+            : [];
+
+        $disabled = array_map('strtolower', array_merge($globalDisabled, $contextDisabled));
 
         if (! empty($disabled)) {
             $grouped = array_filter(

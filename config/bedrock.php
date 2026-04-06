@@ -137,7 +137,19 @@ return [
     |
     */
     'providers' => [
+        // Disabled for ALL contexts (chat and image). Applied first.
         'disabled_providers' => explode(',', env('BEDROCK_DISABLED_PROVIDERS', '')),
+
+        // Disabled only when browsing/selecting chat models.
+        // Use Providers constants to avoid typos: Providers::COHERE
+        'chat' => [
+            'disabled_providers' => explode(',', env('BEDROCK_CHAT_DISABLED_PROVIDERS', '')),
+        ],
+
+        // Disabled only when browsing/selecting image models.
+        'image' => [
+            'disabled_providers' => explode(',', env('BEDROCK_IMAGE_DISABLED_PROVIDERS', '')),
+        ],
     ],
 
     /*

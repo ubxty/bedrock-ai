@@ -74,7 +74,7 @@ class DefaultModelCommand extends Command
             $this->line('  <options=bold>─── Default Chat Model ──────────────────────────────────</>');
             $this->newLine();
 
-            $chatModelId = $this->pickModel($manager, $connection);
+            $chatModelId = $this->pickModel($manager, $connection, null, 'chat');
 
             if (! $chatModelId) {
                 $this->error('  No chat model selected. Aborting.');
@@ -100,7 +100,7 @@ class DefaultModelCommand extends Command
             $this->line('  <fg=gray>Only models with image-input capability are shown.</>');
             $this->newLine();
 
-            $imageModelId = $this->pickModel($manager, $connection, 'image');
+            $imageModelId = $this->pickModel($manager, $connection, 'image', 'image');
 
             if ($imageModelId) {
                 if ($this->confirm("  Test <options=bold>{$imageModelId}</> before setting as default?", true)) {
@@ -178,15 +178,15 @@ class DefaultModelCommand extends Command
     // ─────────────────────────────────────────────────────────────────
 
     /**
-     * @param string|null $capability  Filter to models supporting this capability (e.g. 'image').
-     *                                 Pass null to show all models.
+     * @param string|null $capability  Capability filter: 'image' shows only image-capable models.
+     * @param string|null $context     Provider filter context: 'chat' or 'image' (uses scoped disabled_providers).
      */
-    protected function pickModel(BedrockManager $manager, ?string $connection, ?string $capability = null): ?string
+    protected function pickModel(BedrockManager $manager, ?string $connection, ?string $capability = null, ?string $context = null): ?string
     {
         $this->line('  <options=bold>Fetching available models...</>');
 
         try {
-            $grouped = $manager->getModelsGrouped($connection);
+            $grouped = $manager->getModelsGrouped($connection, $context);
         } catch (\Throwable $e) {
             $this->error('  ✗ Could not load models: ' . $e->getMessage());
 
