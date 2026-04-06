@@ -17,6 +17,8 @@ class InferenceProfileResolver
         'anthropic.claude-opus-4',
         'anthropic.claude-haiku-4',
         'amazon.nova-',
+        'meta.llama3-1',
+        'meta.llama3-2',
         'meta.llama3-3',
         'meta.llama4',
     ];

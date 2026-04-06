@@ -67,13 +67,12 @@ class ConverseClient
     ): array {
         $startTime = microtime(true);
 
-        return $this->withRetry($modelId, function (string $resolvedModelId, array $key) use ($modelId, $messages, $systemPrompt, $maxTokens, $temperature, $startTime) {
+        return $this->withRetry($modelId, function (string $resolvedModelId, array $key) use ($messages, $systemPrompt, $maxTokens, $temperature, $startTime) {
             if ($this->credentials->isBearerMode()) {
-                // Bearer token APIs use direct model IDs — cross-region inference profile
-                // prefixes (us./eu.) added by InferenceProfileResolver are IAM-only and
-                // will cause 403 Authentication failures on bearer endpoints.
+                // Bearer mode also needs inference profile prefixes (us./eu.) for
+                // models that require cross-region inference profiles.
                 return $this->converseHttp(
-                    $modelId, $messages, $systemPrompt,
+                    $resolvedModelId, $messages, $systemPrompt,
                     $maxTokens, $temperature, $startTime
                 );
             }
