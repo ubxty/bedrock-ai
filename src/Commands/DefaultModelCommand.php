@@ -7,6 +7,7 @@ use Ubxty\BedrockAi\BedrockManager;
 
 class DefaultModelCommand extends Command
 {
+    use WritesEnvFile;
     protected $signature = 'bedrock:default-model
                             {--show    : Show current default models}
                             {--reset   : Clear both default models}
@@ -269,30 +270,5 @@ class DefaultModelCommand extends Command
         $modelIndex = array_search($modelLabel, $modelChoices, true);
 
         return $models[$modelIndex]['model_id'];
-    }
-
-    // ─────────────────────────────────────────────────────────────────
-
-    protected function writeEnv(array $values): void
-    {
-        $envPath = base_path('.env');
-
-        if (! file_exists($envPath)) {
-            return;
-        }
-
-        $envContent = file_get_contents($envPath);
-
-        foreach ($values as $key => $value) {
-            $escapedValue = str_contains((string) $value, ' ') ? '"' . $value . '"' : $value;
-
-            if (preg_match("/^{$key}=/m", $envContent)) {
-                $envContent = preg_replace("/^{$key}=.*/m", "{$key}={$escapedValue}", $envContent);
-            } else {
-                $envContent .= "\n{$key}={$escapedValue}";
-            }
-        }
-
-        file_put_contents($envPath, $envContent);
     }
 }

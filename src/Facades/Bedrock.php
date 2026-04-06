@@ -7,7 +7,7 @@ use Ubxty\BedrockAi\BedrockManager;
 
 /**
  * @method static \Ubxty\BedrockAi\Client\BedrockClient client(?string $connection = null)
- * @method static array invoke(string $modelId, string $systemPrompt, string $userMessage, int $maxTokens = 4096, float $temperature = 0.7, ?array $pricing = null)
+ * @method static array invoke(string $modelId = '', string $systemPrompt = '', string $userMessage = '', int $maxTokens = 4096, float $temperature = 0.7, ?array $pricing = null, ?string $connection = null)
  * @method static array testConnection(?string $connection = null)
  * @method static array listModels(?string $connection = null)
  * @method static array fetchModels(?string $connection = null)
@@ -16,9 +16,10 @@ use Ubxty\BedrockAi\BedrockManager;
  * @method static bool isConfigured(?string $connection = null)
  * @method static array getConfig()
  * @method static \Ubxty\BedrockAi\Client\ConverseClient converseClient(?string $connection = null)
- * @method static array converse(string $modelId, array $messages, string $systemPrompt = '', int $maxTokens = 4096, float $temperature = 0.7)
+ * @method static array converse(string $modelId, array $messages, string $systemPrompt = '', int $maxTokens = 4096, float $temperature = 0.7, ?string $connection = null, ?array $pricing = null)
  * @method static \Ubxty\BedrockAi\Client\StreamingClient streamingClient(?string $connection = null)
- * @method static array stream(string $modelId, string $systemPrompt, string $userMessage, callable $onChunk, int $maxTokens = 4096, float $temperature = 0.7)
+ * @method static array stream(string $modelId, string $systemPrompt, string $userMessage, callable $onChunk, int $maxTokens = 4096, float $temperature = 0.7, ?string $connection = null, ?array $pricing = null)
+ * @method static array converseStream(string $modelId, array $messages, callable $onChunk, string $systemPrompt = '', int $maxTokens = 4096, float $temperature = 0.7, ?string $connection = null, ?array $pricing = null)
  * @method static \Ubxty\BedrockAi\Conversation\ConversationBuilder conversation(string $modelId)
  * @method static \Ubxty\BedrockAi\Client\ModelAliasResolver aliases()
  * @method static string resolveAlias(string $modelIdOrAlias)

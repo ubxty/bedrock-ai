@@ -2,6 +2,8 @@
 
 namespace Ubxty\BedrockAi\Client;
 
+use Ubxty\BedrockAi\Events\BedrockKeyRotated;
+use Ubxty\BedrockAi\Events\BedrockRateLimited;
 use Ubxty\BedrockAi\Exceptions\ConfigurationException;
 
 /**
@@ -122,5 +124,29 @@ class StreamingClient
                 'key_used' => $key['label'] ?? 'Primary',
             ];
         });
+    }
+
+    protected function onKeyRotated(array $fromKey, array $toKey, string $reason, string $modelId): void
+    {
+        if (function_exists('event')) {
+            event(new BedrockKeyRotated(
+                fromKeyLabel: $fromKey['label'] ?? 'Unknown',
+                toKeyLabel: $toKey['label'] ?? 'Unknown',
+                reason: $reason,
+                modelId: $modelId,
+            ));
+        }
+    }
+
+    protected function onRateLimitExhausted(string $modelId, array $key, int $retryAttempt): void
+    {
+        if (function_exists('event')) {
+            event(new BedrockRateLimited(
+                modelId: $modelId,
+                keyLabel: $key['label'] ?? 'Unknown',
+                retryAttempt: $retryAttempt,
+                waitSeconds: 0,
+            ));
+        }
     }
 }

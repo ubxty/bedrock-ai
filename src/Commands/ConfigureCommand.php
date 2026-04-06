@@ -7,6 +7,7 @@ use Ubxty\BedrockAi\BedrockManager;
 
 class ConfigureCommand extends Command
 {
+    use WritesEnvFile;
     protected $signature = 'bedrock:configure
                             {--test : Test the connection after configuring}
                             {--show : Show current configuration (masked secrets)}';
@@ -230,33 +231,5 @@ class ConfigureCommand extends Command
         }
 
         return substr($value, 0, 4) . str_repeat('*', strlen($value) - 8) . substr($value, -4);
-    }
-
-    protected function writeEnv(array $values): void
-    {
-        $envPath = base_path('.env');
-
-        if (! file_exists($envPath)) {
-            return;
-        }
-
-        $envContent = file_get_contents($envPath);
-
-        foreach ($values as $key => $value) {
-            if (empty($value)) {
-                continue;
-            }
-
-            // Escape value if it contains spaces
-            $escapedValue = str_contains($value, ' ') ? '"' . $value . '"' : $value;
-
-            if (preg_match("/^{$key}=/m", $envContent)) {
-                $envContent = preg_replace("/^{$key}=.*/m", "{$key}={$escapedValue}", $envContent);
-            } else {
-                $envContent .= "\n{$key}={$escapedValue}";
-            }
-        }
-
-        file_put_contents($envPath, $envContent);
     }
 }

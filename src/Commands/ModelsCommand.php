@@ -78,6 +78,20 @@ class ModelsCommand extends Command
 
         ksort($grouped);
 
+        // Remove providers that have been globally disabled in config.
+        $disabled = array_map(
+            'strtolower',
+            array_filter((array) (config('bedrock.providers.disabled_providers', [])))
+        );
+
+        if (! empty($disabled)) {
+            $grouped = array_filter(
+                $grouped,
+                fn (string $provider) => ! in_array(strtolower($provider), $disabled, true),
+                ARRAY_FILTER_USE_KEY
+            );
+        }
+
         foreach ($grouped as $provider => $providerModels) {
             $this->info("  {$provider} (" . count($providerModels) . ' models)');
 

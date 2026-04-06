@@ -135,14 +135,14 @@ class ConversationBuilder
      */
     public function send(): array
     {
-        $converseClient = $this->manager->converseClient($this->connection);
-
-        $result = $converseClient->converse(
+        $result = $this->manager->converse(
             $this->modelId,
             $this->messages,
             $this->systemPrompt,
             $this->maxTokens,
             $this->temperature,
+            $this->connection,
+            $this->pricing,
         );
 
         // Add assistant response to conversation history
@@ -185,15 +185,15 @@ class ConversationBuilder
      */
     public function sendStream(callable $onChunk): array
     {
-        $streamingClient = $this->manager->streamingClient($this->connection);
-
-        $result = $streamingClient->converseStream(
+        $result = $this->manager->converseStream(
             $this->modelId,
             $this->messages,
             $onChunk,
             $this->systemPrompt,
             $this->maxTokens,
             $this->temperature,
+            $this->connection,
+            $this->pricing,
         );
 
         $this->messages[] = ['role' => 'assistant', 'content' => $result['response']];

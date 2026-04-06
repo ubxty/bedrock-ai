@@ -5,6 +5,7 @@ namespace Ubxty\BedrockAi;
 use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Ubxty\BedrockAi\Client\BedrockClient;
 use Ubxty\BedrockAi\Client\ConverseClient;
 use Ubxty\BedrockAi\Client\CredentialManager;
@@ -12,6 +13,7 @@ use Ubxty\BedrockAi\Client\ModelAliasResolver;
 use Ubxty\BedrockAi\Client\StreamingClient;
 use Ubxty\BedrockAi\Conversation\ConversationBuilder;
 use Ubxty\BedrockAi\Events\BedrockInvoked;
+use Ubxty\BedrockAi\Exceptions\BedrockException;
 use Ubxty\BedrockAi\Exceptions\ConfigurationException;
 use Ubxty\BedrockAi\Exceptions\CostLimitExceededException;
 use Ubxty\BedrockAi\Logging\InvocationLogger;
@@ -147,7 +149,8 @@ class BedrockManager
         string $systemPrompt = '',
         int $maxTokens = 4096,
         float $temperature = 0.7,
-        ?string $connection = null
+        ?string $connection = null,
+        ?array $pricing = null
     ): array {
         $this->checkCostLimits();
 
@@ -155,7 +158,10 @@ class BedrockManager
 
         $result = $this->converseClient($connection)->converse($modelId, $messages, $systemPrompt, $maxTokens, $temperature);
 
-        $this->trackCost($result['cost'] ?? 0);
+        $cost = $this->calculateCost($result['input_tokens'] ?? 0, $result['output_tokens'] ?? 0, $pricing);
+        $result['cost'] = $cost;
+
+        $this->trackCost($cost);
         $this->fireInvokedEvent($result);
         $this->getLogger()->log($result);
 
@@ -197,7 +203,8 @@ class BedrockManager
         callable $onChunk,
         int $maxTokens = 4096,
         float $temperature = 0.7,
-        ?string $connection = null
+        ?string $connection = null,
+        ?array $pricing = null
     ): array {
         $this->checkCostLimits();
 
@@ -205,7 +212,42 @@ class BedrockManager
 
         $result = $this->streamingClient($connection)->stream($modelId, $systemPrompt, $userMessage, $onChunk, $maxTokens, $temperature);
 
-        $this->trackCost($result['cost'] ?? 0);
+        $cost = $this->calculateCost($result['input_tokens'] ?? 0, $result['output_tokens'] ?? 0, $pricing);
+        $result['cost'] = $cost;
+
+        $this->trackCost($cost);
+        $this->fireInvokedEvent($result);
+        $this->getLogger()->log($result);
+
+        return $result;
+    }
+
+    /**
+     * Stream a multi-turn conversation with a callback for each chunk.
+     *
+     * @param array<int, array{role: string, content: string}> $messages
+     * @param callable(string $chunk): void $onChunk
+     */
+    public function converseStream(
+        string $modelId,
+        array $messages,
+        callable $onChunk,
+        string $systemPrompt = '',
+        int $maxTokens = 4096,
+        float $temperature = 0.7,
+        ?string $connection = null,
+        ?array $pricing = null
+    ): array {
+        $this->checkCostLimits();
+
+        $modelId = $this->resolveAlias($modelId);
+
+        $result = $this->streamingClient($connection)->converseStream($modelId, $messages, $onChunk, $systemPrompt, $maxTokens, $temperature);
+
+        $cost = $this->calculateCost($result['input_tokens'] ?? 0, $result['output_tokens'] ?? 0, $pricing);
+        $result['cost'] = $cost;
+
+        $this->trackCost($cost);
         $this->fireInvokedEvent($result);
         $this->getLogger()->log($result);
 
@@ -255,6 +297,12 @@ class BedrockManager
         $connection ??= $this->config['default'] ?? 'default';
         $models = $this->fetchModels($connection);
         $now = now();
+
+        if (! Schema::hasTable('bedrock_models')) {
+            throw new BedrockException(
+                'The bedrock_models table does not exist. Run: php artisan migrate'
+            );
+        }
 
         foreach ($models as $model) {
             \Illuminate\Support\Facades\DB::table('bedrock_models')->upsert(
@@ -557,5 +605,19 @@ class BedrockManager
                 keyUsed: $result['key_used'] ?? 'unknown',
             ));
         }
+    }
+
+    /**
+     * Calculate the cost of an invocation from token counts.
+     */
+    protected function calculateCost(int $inputTokens, int $outputTokens, ?array $pricing = null): float
+    {
+        $inputPrice = $pricing['input_price_per_1k'] ?? 0.003;
+        $outputPrice = $pricing['output_price_per_1k'] ?? 0.015;
+
+        return round(
+            ($inputTokens / 1000) * $inputPrice + ($outputTokens / 1000) * $outputPrice,
+            6
+        );
     }
 }
