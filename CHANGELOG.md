@@ -6,6 +6,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and 
 
 ---
 
+## [0.0.5] - 2026-04-07
+
+### Added
+
+- **`BEDROCK_DEFAULT_MODEL` env variable** — Add `BEDROCK_DEFAULT_MODEL=<model-id>` to your `.env` to configure a default model used whenever no explicit model ID is passed to `invoke()`.
+- **`bedrock:model` command** — Interactive terminal command to browse providers and models (using the same two-step picker as `bedrock:test`) and write the selected model ID to `BEDROCK_DEFAULT_MODEL` in your `.env`. Supports `--show` (display current default), `--reset` (clear default), and `--connection=` (filter by connection).
+- **`BedrockManager::defaultModel()`** — Returns the configured default model from `config('bedrock.defaults.model')`.
+- **`invoke()` default model fallback** — `BedrockManager::invoke()` now accepts an empty `$modelId` and automatically falls back to the configured default; throws a `ConfigurationException` with a helpful message if neither is set.
+
+### Changed
+
+- `config/bedrock.php` `defaults` section now includes `'model' => env('BEDROCK_DEFAULT_MODEL', '')`.
+- `Facades/Bedrock.php` updated with `@method static string defaultModel()` annotation.
+
+---
+
 ## [0.0.4] - 2026-04-06
 
 ### Added

@@ -26,6 +26,7 @@ use Ubxty\BedrockAi\BedrockManager;
  * @method static bool isBearerMode(?string $connection = null)
  * @method static int syncModels(?string $connection = null)
  * @method static array<string, array> getModelsGrouped(?string $connection = null)
+ * @method static string defaultModel()
  *
  * @see \Ubxty\BedrockAi\BedrockManager
  */

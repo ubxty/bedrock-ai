@@ -124,6 +124,7 @@ return [
         'max_tokens' => 4096,
         'temperature' => 0.7,
         'anthropic_version' => 'bedrock-2023-05-31',
+        'model' => env('BEDROCK_DEFAULT_MODEL', ''),
     ],
 
     /*

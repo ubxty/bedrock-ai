@@ -84,14 +84,23 @@ class BedrockManager
      * @return array{response: string, input_tokens: int, output_tokens: int, total_tokens: int, cost: float, latency_ms: int, status: string, key_used: string}
      */
     public function invoke(
-        string $modelId,
-        string $systemPrompt,
-        string $userMessage,
+        string $modelId = '',
+        string $systemPrompt = '',
+        string $userMessage = '',
         int $maxTokens = 4096,
         float $temperature = 0.7,
         ?array $pricing = null,
         ?string $connection = null
     ): array {
+        $modelId = $modelId ?: $this->defaultModel();
+
+        if (! $modelId) {
+            throw new \Ubxty\BedrockAi\Exceptions\ConfigurationException(
+                'No model ID specified and no default model configured. ' .
+                'Set BEDROCK_DEFAULT_MODEL in your .env or pass a model ID explicitly.'
+            );
+        }
+
         $this->checkCostLimits();
 
         $modelId = $this->resolveAlias($modelId);
@@ -312,6 +321,14 @@ class BedrockManager
         ksort($grouped);
 
         return $grouped;
+    }
+
+    /**
+     * Get the configured default model ID (from BEDROCK_DEFAULT_MODEL env).
+     */
+    public function defaultModel(): string
+    {
+        return $this->config['defaults']['model'] ?? '';
     }
 
     /**

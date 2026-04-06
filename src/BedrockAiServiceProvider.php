@@ -36,6 +36,7 @@ class BedrockAiServiceProvider extends ServiceProvider
                 Commands\TestCommand::class,
                 Commands\UsageCommand::class,
                 Commands\PricingCommand::class,
+                Commands\DefaultModelCommand::class,
             ]);
         }
 
