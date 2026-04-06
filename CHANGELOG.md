@@ -6,6 +6,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and 
 
 ---
 
+## [0.0.4] - 2026-04-06
+
+### Added
+
+- **`bedrock_models` database table** — New migration stores synced model metadata (model ID, name, provider, connection, context window, max tokens, capabilities, lifecycle status, synced timestamp). Migrations are auto-loaded and publishable via `php artisan vendor:publish --tag=bedrock-migrations`.
+- **`BedrockManager::syncModels()`** — Fetches all models from AWS and upserts them into the `bedrock_models` table for offline browsing and fast lookups.
+- **`BedrockManager::getModelsGrouped()`** — Returns models grouped by provider, reading from the database first (with live-fetch fallback if the table is empty or hasn't been migrated yet).
+- **`bedrock:test` interactive model picker** — Instead of requiring a raw model ID, the command now presents a two-step interactive selector: first choose a provider (with active/total counts), then choose a model (showing name, ID, context window, and lifecycle status). The `--sync` flag syncs models to the database before displaying the picker.
+- **Anthropic use-case tip on test failure** — When `bedrock:test` invocation fails, the command now prints a hint about the Anthropic use-case form requirement.
+
+### Changed
+
+- `BedrockAiServiceProvider` now calls `loadMigrationsFrom()` so migrations are auto-discovered by the host application.
+- `bedrock:test --max-tokens` default raised from 100 to 200 for more useful test responses.
+
+---
+
 ## [0.0.3] - 2026-04-06
 
 ### Added

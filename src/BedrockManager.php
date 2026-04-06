@@ -4,6 +4,7 @@ namespace Ubxty\BedrockAi;
 
 use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Ubxty\BedrockAi\Client\BedrockClient;
 use Ubxty\BedrockAi\Client\ConverseClient;
 use Ubxty\BedrockAi\Client\CredentialManager;
@@ -234,6 +235,83 @@ class BedrockManager
     public function fetchModels(?string $connection = null): array
     {
         return $this->client($connection)->fetchModels();
+    }
+
+    /**
+     * Sync models from AWS Bedrock into the database for offline browsing.
+     * Returns the count of models upserted.
+     */
+    public function syncModels(?string $connection = null): int
+    {
+        $connection ??= $this->config['default'] ?? 'default';
+        $models = $this->fetchModels($connection);
+        $now = now();
+
+        foreach ($models as $model) {
+            \Illuminate\Support\Facades\DB::table('bedrock_models')->upsert(
+                [
+                    'model_id'         => $model['model_id'],
+                    'name'             => $model['name'],
+                    'provider'         => $model['provider'],
+                    'connection'       => $connection,
+                    'context_window'   => $model['context_window'],
+                    'max_tokens'       => $model['max_tokens'],
+                    'capabilities'     => json_encode($model['capabilities']),
+                    'is_active'        => $model['is_active'] ? 1 : 0,
+                    'lifecycle_status' => $model['is_active'] ? 'ACTIVE' : 'LEGACY',
+                    'synced_at'        => $now,
+                    'created_at'       => $now,
+                    'updated_at'       => $now,
+                ],
+                ['model_id'],
+                ['name', 'provider', 'connection', 'context_window', 'max_tokens', 'capabilities', 'is_active', 'lifecycle_status', 'synced_at', 'updated_at']
+            );
+        }
+
+        return count($models);
+    }
+
+    /**
+     * Get models from the database, grouped by provider.
+     * Falls back to a live fetch if the table is empty or doesn't exist.
+     *
+     * @return array<string, array<int, array>> Keyed by provider slug
+     */
+    public function getModelsGrouped(?string $connection = null): array
+    {
+        try {
+            $rows = \Illuminate\Support\Facades\DB::table('bedrock_models')
+                ->when($connection, fn ($q) => $q->where('connection', $connection))
+                ->orderBy('provider')
+                ->orderBy('name')
+                ->get()
+                ->map(fn ($row) => [
+                    'model_id'       => $row->model_id,
+                    'name'           => $row->name,
+                    'provider'       => $row->provider,
+                    'context_window' => $row->context_window,
+                    'max_tokens'     => $row->max_tokens,
+                    'capabilities'   => json_decode($row->capabilities, true) ?? [],
+                    'is_active'      => (bool) $row->is_active,
+                ])
+                ->all();
+        } catch (\Throwable) {
+            $rows = [];
+        }
+
+        if (empty($rows)) {
+            $rows = $this->fetchModels($connection);
+        }
+
+        $grouped = [];
+        foreach ($rows as $model) {
+            $provider = $model['provider'] ?: (explode('.', $model['model_id'])[0] ?? 'Other');
+            $grouped[$provider][] = $model;
+        }
+
+        ksort($grouped);
+
+        return $grouped;
     }
 
     /**
