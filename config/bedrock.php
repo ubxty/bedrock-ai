@@ -121,11 +121,19 @@ return [
     | in terminal commands (bedrock:test, bedrock:default-model, etc.) and
     | in all PHP calls (getModelsGrouped, syncModels, etc.).
     |
-    | 'disabled_providers' — case-insensitive list of provider names to hide.
-    | Add any provider name exactly as it appears in the model list.
+    | 'disabled_providers' — list of provider names to hide globally.
+    | Use the Providers constants to avoid typos with space-containing names:
     |
-    | Example:
-    |   'disabled_providers' => ['AI21 Labs', 'Cohere', 'Writer'],
+    |   use Ubxty\BedrockAi\Providers;
+    |
+    |   'disabled_providers' => [
+    |       Providers::AI21_LABS,
+    |       Providers::COHERE,
+    |       Providers::WRITER,
+    |   ],
+    |
+    | Or via .env as a comma-separated string:
+    |   BEDROCK_DISABLED_PROVIDERS="AI21 Labs,Cohere,Writer"
     |
     */
     'providers' => [
