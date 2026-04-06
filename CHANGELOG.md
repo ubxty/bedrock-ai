@@ -6,6 +6,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and 
 
 ---
 
+## [0.0.6] - 2026-04-06
+
+### Fixed
+
+- **`TestCommand` ParseError** — Removed duplicate class body that was appended at line 255, causing a `syntax error, unexpected token "protected"` on Laravel's `package:discover` post-autoload hook.
+
+---
+
 ## [0.0.5] - 2026-04-07
 
 ### Added
