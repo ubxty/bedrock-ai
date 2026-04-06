@@ -320,4 +320,16 @@ class ConversationBuilder
 
         return $this;
     }
+
+    /**
+     * Replace the entire message history (used for error recovery).
+     *
+     * @param  array<int, array{role: string, content: string|array}>  $messages
+     */
+    public function setMessages(array $messages): static
+    {
+        $this->messages = $messages;
+
+        return $this;
+    }
 }

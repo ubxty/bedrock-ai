@@ -6,6 +6,27 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and 
 
 ---
 
+## [0.0.11] - 2026-04-06
+
+### Added
+
+- **`/image` command in `bedrock:chat`** — Send `/image <path> [prompt]` during a chat session to analyse an image with the current model. Supports JPEG, PNG, GIF, and WebP. Quoted paths with spaces are supported. If no prompt is given, defaults to "Describe this image in detail."
+- **`ConversationBuilder::setMessages()`** — New method to replace the full message history directly, used internally for error recovery.
+
+### Fixed
+
+- **StreamingClient multimodal support** — `StreamingClient` now uses the shared `formatMessages()` method from `HasRetryLogic`, fixing a crash when streaming multimodal (image/document) conversations.
+- **Chat error recovery with multimodal messages** — Error recovery in `bedrock:chat` no longer breaks when the conversation contains image/document blocks. Uses `setMessages()` instead of replaying individual messages.
+- **File-size guard on image & document uploads** — `userWithImage()` and `userWithDocument()` now reject files larger than 15 MB with a clear error message.
+- **Document format auto-detection** — `userWithDocument()` now maps file extensions to AWS-accepted format names (e.g. `docx` → `docx`, `htm` → `html`, `md` → `md`) instead of passing raw extensions.
+- **`ModelsCommand` grouping** — Models are now grouped by provider name via `getModelsGrouped()` instead of splitting the model ID on `.`, which produced incorrect groups for some IDs.
+
+### Changed
+
+- **Shared `formatMessages()` and `calculateCost()` in `HasRetryLogic` trait** — Both methods extracted from `ConverseClient` / `BedrockClient` into the shared trait, eliminating code duplication across all three client classes.
+
+---
+
 ## [0.0.10] - 2026-04-06
 
 ### Added

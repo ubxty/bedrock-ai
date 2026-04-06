@@ -149,6 +149,69 @@ class ChatCommand extends Command
                 continue;
             }
 
+            // /image <path> [prompt] — analyse an image file
+            if (str_starts_with($command, '/image ')) {
+                $args = trim(substr($input, 7));
+                $imagePath = null;
+                $imagePrompt = 'Describe this image in detail.';
+
+                // Split: first token is path, rest is prompt
+                if (preg_match('/^("(?<quoted>[^"]+)"|(?<bare>\S+))\s*(?<prompt>.*)$/s', $args, $m)) {
+                    $imagePath = $m['quoted'] ?: $m['bare'];
+                    if (! empty(trim($m['prompt']))) {
+                        $imagePrompt = trim($m['prompt']);
+                    }
+                }
+
+                if (! $imagePath || ! is_file($imagePath)) {
+                    $this->error('  File not found: ' . ($imagePath ?: '(none)'));
+                    $this->line('  <fg=gray>Usage: /image /path/to/file.png [optional prompt]</>');
+
+                    continue;
+                }
+
+                $ext = strtolower(pathinfo($imagePath, PATHINFO_EXTENSION));
+                if (! in_array($ext, ['jpg', 'jpeg', 'png', 'gif', 'webp'])) {
+                    $this->error("  Unsupported image format: .{$ext}");
+                    $this->line('  <fg=gray>Supported: jpg, jpeg, png, gif, webp</>');
+
+                    continue;
+                }
+
+                $sizeKb = round(filesize($imagePath) / 1024);
+                $this->line("  <fg=gray>Sending image: {$imagePath} ({$sizeKb} KB)</>"); 
+
+                try {
+                    $conversation->userWithImage($imagePrompt, $imagePath);
+
+                    $this->line('');
+                    $this->line('  <fg=cyan>Assistant</>');
+
+                    if ($useStreaming && ! $manager->client($connection)->getCredentialManager()->isBearerMode()) {
+                        $result = $this->sendStreaming($conversation);
+                    } else {
+                        $result = $this->sendBlocking($conversation);
+                    }
+
+                    $this->messageCount++;
+                    $this->totalInputTokens += $result['input_tokens'] ?? 0;
+                    $this->totalOutputTokens += $result['output_tokens'] ?? 0;
+                    $this->totalCost += $result['cost'] ?? 0;
+
+                    $this->newLine();
+                    $this->line(sprintf(
+                        '  <fg=gray>[%d in / %d out / %dms]</>',
+                        $result['input_tokens'] ?? 0,
+                        $result['output_tokens'] ?? 0,
+                        $result['latency_ms'] ?? 0,
+                    ));
+                } catch (\Exception $e) {
+                    $this->error('  Error: ' . $e->getMessage());
+                }
+
+                continue;
+            }
+
             $conversation->user($input);
 
             try {
@@ -174,17 +237,10 @@ class ChatCommand extends Command
                     $result['latency_ms'] ?? 0,
                 ));
             } catch (\Exception $e) {
-                // Remove the user message we just added since it failed
+                // Remove the failed message and restore conversation state
                 $messages = $conversation->getMessages();
                 array_pop($messages);
-                $conversation->reset();
-                foreach ($messages as $msg) {
-                    if ($msg['role'] === 'user') {
-                        $conversation->user($msg['content']);
-                    } else {
-                        $conversation->assistant($msg['content']);
-                    }
-                }
+                $conversation->reset()->setMessages($messages);
 
                 $this->error('  Error: ' . $e->getMessage());
             }
@@ -301,6 +357,8 @@ class ChatCommand extends Command
         $this->line('  <fg=yellow>/system <text></>  Change the system prompt');
         $this->line('  <fg=yellow>/model <id></>     Switch to a different model');
         $this->line('  <fg=yellow>/temp <0-1></>     Change temperature');
+        $this->line('  <fg=yellow>/image <path> [prompt]</>');
+        $this->line('                    Analyse an image (jpg/png/gif/webp)');
     }
 
     protected function printStats(): void
