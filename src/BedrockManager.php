@@ -2,6 +2,8 @@
 
 namespace Ubxty\BedrockAi;
 
+use Illuminate\Contracts\Cache\LockTimeoutException;
+use Illuminate\Support\Facades\Cache;
 use Ubxty\BedrockAi\Client\BedrockClient;
 use Ubxty\BedrockAi\Client\ConverseClient;
 use Ubxty\BedrockAi\Client\CredentialManager;
@@ -11,7 +13,6 @@ use Ubxty\BedrockAi\Conversation\ConversationBuilder;
 use Ubxty\BedrockAi\Events\BedrockInvoked;
 use Ubxty\BedrockAi\Exceptions\ConfigurationException;
 use Ubxty\BedrockAi\Exceptions\CostLimitExceededException;
-use Illuminate\Support\Facades\Cache;
 use Ubxty\BedrockAi\Logging\InvocationLogger;
 use Ubxty\BedrockAi\Pricing\PricingService;
 use Ubxty\BedrockAi\Usage\UsageTracker;
@@ -301,6 +302,7 @@ class BedrockManager
 
     /**
      * Check if the default connection is configured.
+     * Delegates normalization to CredentialManager to handle bearer mode auto-detection.
      */
     public function isConfigured(?string $connection = null): bool
     {
@@ -317,14 +319,25 @@ class BedrockManager
             return false;
         }
 
-        $firstKey = $keys[0];
-        $authMode = $firstKey['auth_mode'] ?? 'iam';
-
-        if ($authMode === 'bearer') {
-            return ! empty($firstKey['bearer_token']);
+        try {
+            $cm = new CredentialManager($keys);
+        } catch (\Exception $e) {
+            return false;
         }
 
-        return ! empty($firstKey['aws_key']) && ! empty($firstKey['aws_secret']);
+        $key = $cm->current();
+
+        return $key['auth_mode'] === 'bearer'
+            ? ! empty($key['bearer_token'])
+            : ! empty($key['aws_key']) && ! empty($key['aws_secret']);
+    }
+
+    /**
+     * Check if the default (or given) connection uses Bearer token authentication.
+     */
+    public function isBearerMode(?string $connection = null): bool
+    {
+        return $this->client($connection)->getCredentialManager()->isBearerMode();
     }
 
     /**
@@ -365,6 +378,7 @@ class BedrockManager
 
     /**
      * Track cost after a successful invocation.
+     * Uses an atomic lock to prevent race conditions under concurrent requests.
      */
     protected function trackCost(float $cost): void
     {
@@ -375,8 +389,16 @@ class BedrockManager
         $dailyKey = 'bedrock_ai_daily_cost_' . date('Y-m-d');
         $monthlyKey = 'bedrock_ai_monthly_cost_' . date('Y-m');
 
-        Cache::put($dailyKey, (float) Cache::get($dailyKey, 0) + $cost, now()->endOfDay());
-        Cache::put($monthlyKey, (float) Cache::get($monthlyKey, 0) + $cost, now()->endOfMonth());
+        try {
+            Cache::lock('bedrock_ai_cost_lock', 5)->block(2, function () use ($dailyKey, $monthlyKey, $cost) {
+                Cache::put($dailyKey, (float) Cache::get($dailyKey, 0) + $cost, now()->endOfDay());
+                Cache::put($monthlyKey, (float) Cache::get($monthlyKey, 0) + $cost, now()->endOfMonth());
+            });
+        } catch (LockTimeoutException $e) {
+            // Lock timeout - fall back to non-atomic update (minor inaccuracy possible under extreme concurrency)
+            Cache::put($dailyKey, (float) Cache::get($dailyKey, 0) + $cost, now()->endOfDay());
+            Cache::put($monthlyKey, (float) Cache::get($monthlyKey, 0) + $cost, now()->endOfMonth());
+        }
     }
 
     /**

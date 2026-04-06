@@ -277,7 +277,7 @@ class BedrockClient
     ): array {
         $key = $this->credentials->current();
         $region = $key['region'] ?? 'us-east-1';
-        $bearerToken = $this->credentials->getHttpBearerToken();
+        $bearerToken = $this->credentials->getBearerToken();
 
         $url = "https://bedrock-runtime.{$region}.amazonaws.com/model/{$modelId}/invoke";
         $isTitan = str_contains($modelId, 'titan');

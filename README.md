@@ -671,21 +671,30 @@ php artisan bedrock:models --json
 
 ### `bedrock:chat`
 
-Interactive CLI chat session with any Bedrock model.
+Interactive CLI chat session with any Bedrock model. Supports real-time streaming by default.
 
 ```bash
-# Start interactive chat (will prompt for model selection)
+# Start interactive chat (will fetch and list available models)
 php artisan bedrock:chat
 
-# Start with a specific model
-php artisan bedrock:chat --model=anthropic.claude-sonnet-4-20250514-v1:0
+# Start with a specific model (positional argument or alias)
+php artisan bedrock:chat anthropic.claude-sonnet-4-20250514-v1:0
+php artisan bedrock:chat claude
 
 # Set a custom system prompt
 php artisan bedrock:chat --system="You are a medical assistant."
 
+# Disable streaming (wait for full response)
+php artisan bedrock:chat --no-stream
+
 # Use a specific connection
 php artisan bedrock:chat --connection=production
+
+# Adjust generation parameters
+php artisan bedrock:chat --max-tokens=2048 --temperature=0.3
 ```
+
+> **Note:** Streaming is enabled by default when using IAM auth mode. It is automatically disabled when using Bearer token mode (which does not support streaming).
 
 **In-session commands:**
 
@@ -928,6 +937,7 @@ Raw Bedrock errors are automatically mapped to user-friendly messages:
 | `pricing()` | `PricingService` | Get the pricing service |
 | `usage()` | `UsageTracker` | Get the usage tracker |
 | `isConfigured(?string $connection)` | `bool` | Check if configured |
+| `isBearerMode(?string $connection)` | `bool` | Check if the connection uses Bearer token auth |
 
 ### `BedrockClient::invoke()` Return Value
 
