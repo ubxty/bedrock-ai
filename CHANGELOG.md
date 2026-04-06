@@ -6,6 +6,27 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and 
 
 ---
 
+## [0.0.8] - 2026-04-06
+
+### Added
+
+- **Input modalities display** — Model pickers now show which models support image and document/PDF inputs via `[img]` and `[pdf]` tags.
+- **`--legacy` flag** — All three model picker commands (`bedrock:test`, `bedrock:default-model`, `bedrock:models`) now hide legacy/deprecated models by default; pass `--legacy` to include them.
+- **Cleaner model display** — Model names show as `Name — Xk context [tags]` format instead of complex tables; duplicate names disambiguated with `(short-id)` suffix.
+
+### Changed
+
+- `BedrockClient::fetchModels()` now captures `inputModalities` from AWS API alongside output capabilities.
+- `bedrock:models` table now shows `Accepts` column with input modality tags (`img`, `pdf`, or `—`).
+- Provider selector shows simplified `Provider (N models)` instead of `(active / total)` count.
+- Model ID displayed in gray after selection for confirmation.
+
+### Database
+
+- **New migration** `add_input_modalities_to_bedrock_models_table` adds `input_modalities` JSON column (auto-applied on migrate).
+
+---
+
 ## [0.0.7] - 2026-04-06
 
 ### Added
