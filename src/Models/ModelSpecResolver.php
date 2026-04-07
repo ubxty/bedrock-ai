@@ -101,6 +101,76 @@ class ModelSpecResolver
     }
 
     /**
+     * Resolve the known input modalities for a model based on its ID.
+     *
+     * @return array<int, string>  e.g. ['text'], ['text', 'image', 'document']
+     */
+    public static function inputModalities(string $modelId): array
+    {
+        // Claude 3+ and Claude 4 support text, image, and document
+        if (str_contains($modelId, 'claude-3') || str_contains($modelId, 'claude-sonnet-4')
+            || str_contains($modelId, 'claude-opus-4') || str_contains($modelId, 'claude-haiku-4')) {
+            return ['text', 'image', 'document'];
+        }
+
+        // Claude 2.x / Instant — text only
+        if (str_contains($modelId, 'claude-v2') || str_contains($modelId, 'claude-instant')) {
+            return ['text'];
+        }
+
+        // Amazon Nova Pro & Lite — text, image, document
+        if (str_contains($modelId, 'nova-pro') || str_contains($modelId, 'nova-lite')) {
+            return ['text', 'image', 'document'];
+        }
+
+        // Amazon Nova Micro — text only
+        if (str_contains($modelId, 'nova-micro')) {
+            return ['text'];
+        }
+
+        // Amazon Titan — text only
+        if (str_contains($modelId, 'titan')) {
+            return ['text'];
+        }
+
+        // Llama 4 Scout/Maverick — text, image
+        if (str_contains($modelId, 'llama4')) {
+            return ['text', 'image'];
+        }
+
+        // Llama 3.x — text only
+        if (str_contains($modelId, 'llama3') || str_contains($modelId, 'llama-3')) {
+            return ['text'];
+        }
+
+        // Mistral / Mixtral — text only
+        if (str_contains($modelId, 'mistral') || str_contains($modelId, 'mixtral')) {
+            return ['text'];
+        }
+
+        // Cohere — text only
+        if (str_contains($modelId, 'command-r')) {
+            return ['text'];
+        }
+
+        // AI21 Jamba — text only
+        if (str_contains($modelId, 'jamba')) {
+            return ['text'];
+        }
+
+        // Unknown model — assume text only (safe default)
+        return ['text'];
+    }
+
+    /**
+     * Check if a model supports a given input modality.
+     */
+    public static function supportsModality(string $modelId, string $modality): bool
+    {
+        return in_array($modality, self::inputModalities($modelId), true);
+    }
+
+    /**
      * Get all known model families and their base specs.
      *
      * @return array<string, array{name: string, context_window: int, max_tokens: int}>

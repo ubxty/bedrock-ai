@@ -13,6 +13,18 @@ class TokenEstimator
     protected const CHARS_PER_TOKEN = 4;
 
     /**
+     * Approximate bytes of base64 document data per token.
+     * PDFs are internally parsed by Bedrock; empirically ~750 base64 bytes ≈ 1 token.
+     */
+    protected const DOCUMENT_BYTES_PER_TOKEN = 750;
+
+    /**
+     * Approximate tokens per image (most vision models use a fixed image budget).
+     * Claude 3 uses ~1,600 tokens for a standard image; Nova is similar.
+     */
+    protected const IMAGE_TOKENS_DEFAULT = 1600;
+
+    /**
      * Estimate the number of tokens in a string.
      */
     public static function estimate(string $text): int
@@ -67,5 +79,40 @@ class TokenEstimator
             ($inputTokens / 1000) * $inputPrice + ($expectedOutputTokens / 1000) * $outputPrice,
             6
         );
+    }
+
+    /**
+     * Estimate tokens for multimodal message blocks (text + images + documents).
+     *
+     * @param  array<int, array{role: string, content: string|array}>  $messages
+     */
+    public static function estimateMultimodal(array $messages, string $systemPrompt = ''): int
+    {
+        $tokens = self::estimate($systemPrompt);
+
+        foreach ($messages as $msg) {
+            $content = $msg['content'];
+
+            if (is_string($content)) {
+                $tokens += self::estimate($content);
+
+                continue;
+            }
+
+            foreach ($content as $block) {
+                $type = $block['type'] ?? 'text';
+
+                if ($type === 'text') {
+                    $tokens += self::estimate($block['text'] ?? '');
+                } elseif ($type === 'image') {
+                    $tokens += self::IMAGE_TOKENS_DEFAULT;
+                } elseif ($type === 'document') {
+                    $dataLen = strlen($block['data'] ?? '');
+                    $tokens += max(100, (int) ceil($dataLen / self::DOCUMENT_BYTES_PER_TOKEN));
+                }
+            }
+        }
+
+        return $tokens;
     }
 }

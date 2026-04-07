@@ -215,4 +215,117 @@ class ModelSpecResolverTest extends TestCase
             $this->assertArrayHasKey('max_tokens', $families[$key]);
         }
     }
+
+    // ─── Input modality tests ─────────────────────────────────────
+
+    public function testClaude3SupportsImageAndDocument(): void
+    {
+        $modalities = ModelSpecResolver::inputModalities('anthropic.claude-3-5-sonnet-20241022-v2:0');
+
+        $this->assertContains('text', $modalities);
+        $this->assertContains('image', $modalities);
+        $this->assertContains('document', $modalities);
+    }
+
+    public function testClaude4SupportsImageAndDocument(): void
+    {
+        $modalities = ModelSpecResolver::inputModalities('anthropic.claude-sonnet-4-20250514-v1:0');
+
+        $this->assertContains('text', $modalities);
+        $this->assertContains('image', $modalities);
+        $this->assertContains('document', $modalities);
+    }
+
+    public function testClaudeV2IsTextOnly(): void
+    {
+        $modalities = ModelSpecResolver::inputModalities('anthropic.claude-v2');
+
+        $this->assertSame(['text'], $modalities);
+    }
+
+    public function testNovaProSupportsImageAndDocument(): void
+    {
+        $modalities = ModelSpecResolver::inputModalities('amazon.nova-pro-v1:0');
+
+        $this->assertContains('text', $modalities);
+        $this->assertContains('image', $modalities);
+        $this->assertContains('document', $modalities);
+    }
+
+    public function testNovaLiteSupportsImageAndDocument(): void
+    {
+        $modalities = ModelSpecResolver::inputModalities('amazon.nova-lite-v1:0');
+
+        $this->assertContains('text', $modalities);
+        $this->assertContains('image', $modalities);
+        $this->assertContains('document', $modalities);
+    }
+
+    public function testNovaMicroIsTextOnly(): void
+    {
+        $modalities = ModelSpecResolver::inputModalities('amazon.nova-micro-v1:0');
+
+        $this->assertSame(['text'], $modalities);
+    }
+
+    public function testTitanIsTextOnly(): void
+    {
+        $modalities = ModelSpecResolver::inputModalities('amazon.titan-text-express-v1');
+
+        $this->assertSame(['text'], $modalities);
+    }
+
+    public function testLlama4SupportsImage(): void
+    {
+        $modalities = ModelSpecResolver::inputModalities('meta.llama4-scout-17b-16e-instruct-v1:0');
+
+        $this->assertContains('text', $modalities);
+        $this->assertContains('image', $modalities);
+        $this->assertNotContains('document', $modalities);
+    }
+
+    public function testLlama3IsTextOnly(): void
+    {
+        $modalities = ModelSpecResolver::inputModalities('meta.llama3-3-70b-instruct-v1:0');
+
+        $this->assertSame(['text'], $modalities);
+    }
+
+    public function testMistralIsTextOnly(): void
+    {
+        $modalities = ModelSpecResolver::inputModalities('mistral.mistral-large-2402-v1:0');
+
+        $this->assertSame(['text'], $modalities);
+    }
+
+    public function testCohereIsTextOnly(): void
+    {
+        $modalities = ModelSpecResolver::inputModalities('cohere.command-r-plus-v1:0');
+
+        $this->assertSame(['text'], $modalities);
+    }
+
+    public function testJambaIsTextOnly(): void
+    {
+        $modalities = ModelSpecResolver::inputModalities('ai21.jamba-instruct-v1:0');
+
+        $this->assertSame(['text'], $modalities);
+    }
+
+    public function testUnknownModelDefaultsToTextOnly(): void
+    {
+        $modalities = ModelSpecResolver::inputModalities('unknown.model-v1');
+
+        $this->assertSame(['text'], $modalities);
+    }
+
+    public function testSupportsModalityHelper(): void
+    {
+        $this->assertTrue(ModelSpecResolver::supportsModality('anthropic.claude-3-5-sonnet-20241022-v2:0', 'document'));
+        $this->assertTrue(ModelSpecResolver::supportsModality('anthropic.claude-3-5-sonnet-20241022-v2:0', 'image'));
+        $this->assertFalse(ModelSpecResolver::supportsModality('meta.llama3-3-70b-instruct-v1:0', 'document'));
+        $this->assertFalse(ModelSpecResolver::supportsModality('meta.llama3-3-70b-instruct-v1:0', 'image'));
+        $this->assertTrue(ModelSpecResolver::supportsModality('meta.llama4-scout-17b-16e-instruct-v1:0', 'image'));
+        $this->assertFalse(ModelSpecResolver::supportsModality('meta.llama4-scout-17b-16e-instruct-v1:0', 'document'));
+    }
 }

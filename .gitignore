@@ -13,3 +13,5 @@ bugs3.md
 tests/400.png
 tests/test_vision.php
 test_prefix.php
+test_all_models.php
+test_pdf_parsing.php

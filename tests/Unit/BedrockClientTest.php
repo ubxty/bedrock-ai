@@ -44,7 +44,7 @@ class BedrockClientTest extends TestCase
         $error = 'Bedrock HTTP Error: 400 - {"message":"Malformed input request: invalid body"}';
 
         $this->assertSame(
-            'Request error: This model may not support text chat.',
+            'Request error: The model may not support this input type. Check that the model supports document/image input.',
             BedrockClient::extractUserFriendlyError($error)
         );
     }

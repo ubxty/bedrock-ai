@@ -280,10 +280,18 @@ class BedrockClient
                 'model identifier is invalid' => 'Invalid model: This model ID is not valid for Bedrock.',
                 "doesn't support on-demand throughput" => 'Model unavailable: This model requires provisioned throughput.',
                 "isn't supported" => 'Model unavailable: This model requires an inference profile.',
-                'Malformed input request' => 'Request error: This model may not support text chat.',
+                'Malformed input request' => 'Request error: The model may not support this input type. Check that the model supports document/image input.',
                 'end of its life' => 'Model deprecated: This model version has been retired.',
                 'AccessDeniedException' => "Access denied: You don't have permission to use this model.",
                 'not authorized' => "Access denied: You don't have permission to use this model.",
+                'Document input is not supported' => 'Document not supported: This model does not accept document input. Use a model like Claude 3+, Nova Pro, or Nova Lite.',
+                'document is not supported' => 'Document not supported: This model does not accept document input. Use a model like Claude 3+, Nova Pro, or Nova Lite.',
+                'Image input is not supported' => 'Image not supported: This model does not accept image input. Use a model like Claude 3+, Nova Pro, or Nova Lite.',
+                'image is not supported' => 'Image not supported: This model does not accept image input. Use a model like Claude 3+, Nova Pro, or Nova Lite.',
+                'Invalid document format' => 'Invalid document: The document format or content is not valid. Supported formats: pdf, csv, doc, docx, xls, xlsx, html, txt, md.',
+                'Invalid image format' => 'Invalid image: The image format or content is not valid. Supported formats: jpeg, png, gif, webp.',
+                'too many images' => 'Too many images: The request contains more images than the model allows.',
+                'too many documents' => 'Too many documents: The request contains more documents than the model allows.',
             ];
 
             foreach ($friendlyMessages as $needle => $friendly) {

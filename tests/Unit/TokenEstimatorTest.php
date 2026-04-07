@@ -98,4 +98,86 @@ class TokenEstimatorTest extends TestCase
         // total: 0.0045
         $this->assertSame(0.0045, $cost);
     }
+
+    // ─── Multimodal estimation tests ──────────────────────────────
+
+    public function testEstimateMultimodalWithTextOnly(): void
+    {
+        $messages = [
+            ['role' => 'user', 'content' => str_repeat('a', 400)],      // ~100 tokens
+            ['role' => 'assistant', 'content' => str_repeat('b', 200)],  // ~50 tokens
+        ];
+
+        $tokens = TokenEstimator::estimateMultimodal($messages, str_repeat('c', 100)); // ~25 tokens
+
+        $this->assertSame(175, $tokens);
+    }
+
+    public function testEstimateMultimodalWithDocument(): void
+    {
+        $fakePdfBase64 = str_repeat('A', 7500); // 7500 / 750 = 10 doc tokens, but min is 100
+
+        $messages = [
+            [
+                'role' => 'user',
+                'content' => [
+                    ['type' => 'document', 'format' => 'pdf', 'name' => 'test', 'data' => $fakePdfBase64],
+                    ['type' => 'text', 'text' => str_repeat('x', 40)],  // ~10 tokens
+                ],
+            ],
+        ];
+
+        $tokens = TokenEstimator::estimateMultimodal($messages);
+
+        // max(100, 10) doc tokens + 10 text tokens = 110
+        $this->assertSame(110, $tokens);
+    }
+
+    public function testEstimateMultimodalWithImage(): void
+    {
+        $messages = [
+            [
+                'role' => 'user',
+                'content' => [
+                    ['type' => 'image', 'format' => 'jpeg', 'data' => base64_encode('fake')],
+                    ['type' => 'text', 'text' => 'Describe'],  // ~2 tokens
+                ],
+            ],
+        ];
+
+        $tokens = TokenEstimator::estimateMultimodal($messages);
+
+        // 1600 image tokens + ~2 text tokens = 1602
+        $this->assertSame(1602, $tokens);
+    }
+
+    public function testEstimateMultimodalDocumentMinimumTokens(): void
+    {
+        // Very small document should still return at least 100 tokens
+        $messages = [
+            [
+                'role' => 'user',
+                'content' => [
+                    ['type' => 'document', 'format' => 'csv', 'name' => 'tiny', 'data' => 'abc'],
+                    ['type' => 'text', 'text' => 'Read'],
+                ],
+            ],
+        ];
+
+        $tokens = TokenEstimator::estimateMultimodal($messages);
+
+        // min 100 for document + 1 for text
+        $this->assertSame(101, $tokens);
+    }
+
+    public function testEstimateMultimodalWithSystemPrompt(): void
+    {
+        $messages = [
+            ['role' => 'user', 'content' => str_repeat('a', 40)], // ~10 tokens
+        ];
+
+        $tokens = TokenEstimator::estimateMultimodal($messages, str_repeat('s', 80)); // ~20 tokens
+
+        $this->assertSame(30, $tokens);
+    }
 }
