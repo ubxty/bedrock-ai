@@ -6,6 +6,28 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and 
 
 ---
 
+## [0.0.12] - 2026-04-07
+
+### Added
+
+- **`ConversationBuilder::userWithDocuments()`** — Send multiple documents in a single message for comparison or batch analysis. Accepts an array of file paths or associative arrays with `path`, `format`, and `name` keys.
+- **`ConversationBuilder::userWithAttachments()`** — Send mixed attachments (any combination of images and documents) in a single message. Each attachment specifies its `type` (`image` or `document`) and `path`.
+- **Model input-modality validation** — `userWithImage()`, `userWithDocument()`, `userWithDocuments()`, and `userWithAttachments()` now validate that the selected model supports the requested input type before sending, throwing a clear `BedrockException` with supported modalities listed.
+- **`ModelSpecResolver::inputModalities()`** — Returns known input modalities (`text`, `image`, `document`) for a model ID, covering Claude 3/4, Nova Pro/Lite/Micro, Llama 3/4, Titan, Mistral, Cohere, and AI21.
+- **`ModelSpecResolver::supportsModality()`** — Convenience check for whether a model supports a specific input modality.
+- **`TokenEstimator::estimateMultimodal()`** — Multimodal-aware token estimation that accounts for document size (~750 base64 bytes per token, 100-token minimum) and image budgets (~1,600 tokens per image) alongside text tokens.
+- **Format validation** — `userWithImage()` and `userWithDocument()` now reject unsupported formats with a clear error listing allowed formats (images: jpeg, png, gif, webp; documents: pdf, csv, doc, docx, xls, xlsx, html, txt, md).
+- **Empty file guard** — Uploading a 0-byte file now throws a `BedrockException` instead of sending an empty payload.
+- **Expanded friendly error messages** — `BedrockClient` now maps document/image-specific AWS errors (unsupported input, invalid format, too many files) to actionable user-facing messages.
+
+### Changed
+
+- **`ConversationBuilder::estimate()` uses multimodal estimation** — When the conversation contains image or document blocks, `estimate()` now uses `TokenEstimator::estimateMultimodal()` for accurate token counts instead of extracting text only.
+- **`ConverseClient::foldSystemIntoMessages()` — system prompt placement** — For multimodal messages, the system text is now inserted before the first text block (after media blocks) so models process media content first, instead of prepending it before all blocks.
+- **Refactored `userWithImage()` / `userWithDocument()`** — File reading, format resolution, and validation extracted into reusable private helpers (`readFileAsBase64`, `resolveImageFormat`, `resolveDocumentFormat`, `validateFormat`), reducing duplication.
+
+---
+
 ## [0.0.11] - 2026-04-07
 
 ### Added
