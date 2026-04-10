@@ -6,7 +6,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and 
 
 ---
 
+## [0.0.13] - 2026-04-10
+
+### Fixed
+
+- **`ChatCommand` rolls back failed multimodal message** — When a `/image` or `/doc` send fails, the failed multimodal message is now popped from the conversation history so subsequent messages are not affected by the corrupted state.
+- **`ConverseClient` passes resolved model ID in bearer mode** — Bearer token calls now correctly use the inference-profile-resolved ID (with `us.`/`eu.` cross-region prefix) instead of the raw model ID, fixing requests for models that require cross-region inference profiles when using bearer token authentication.
+- **`InferenceProfileResolver` adds Llama 3.1 and 3.2 patterns** — `meta.llama3-1` and `meta.llama3-2` added to the cross-region inference profile prefix list so Llama 3.1/3.2 models are correctly prefixed for cross-region routing.
+- **`ConverseClient::converse()` auto-folds system prompt for models that reject system messages** — Models that do not accept a top-level `system` block (e.g. Mixtral, Mistral 7B) no longer throw an error. The system prompt is automatically prepended as `[System: ...]` into the first user message and the request is transparently retried without a system block. Works for both plain-text and multimodal (block-array) user message content.
+
+---
+
 ## [0.0.12] - 2026-04-07
+
 
 ### Added
 
@@ -23,7 +35,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and 
 ### Changed
 
 - **`ConversationBuilder::estimate()` uses multimodal estimation** — When the conversation contains image or document blocks, `estimate()` now uses `TokenEstimator::estimateMultimodal()` for accurate token counts instead of extracting text only.
-- **`ConverseClient::foldSystemIntoMessages()` — system prompt placement** — For multimodal messages, the system text is now inserted before the first text block (after media blocks) so models process media content first, instead of prepending it before all blocks.
 - **Refactored `userWithImage()` / `userWithDocument()`** — File reading, format resolution, and validation extracted into reusable private helpers (`readFileAsBase64`, `resolveImageFormat`, `resolveDocumentFormat`, `validateFormat`), reducing duplication.
 
 ---

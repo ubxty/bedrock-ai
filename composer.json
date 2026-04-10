@@ -3,7 +3,7 @@
     "description": "A Laravel package for seamless AWS Bedrock integration with multi-key rotation, cross-region inference, usage tracking, pricing, and powerful CLI tools.",
     "keywords": ["aws", "bedrock", "ai", "laravel", "claude", "titan", "llama", "nova"],
     "license": "MIT",
-    "version": "0.0.12",
+    "version": "0.0.13",
     "type": "library",
     "authors": [
         {
