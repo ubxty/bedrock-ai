@@ -17,6 +17,7 @@ use Ubxty\BedrockAi\Exceptions\BedrockException;
 use Ubxty\BedrockAi\Exceptions\ConfigurationException;
 use Ubxty\BedrockAi\Exceptions\CostLimitExceededException;
 use Ubxty\BedrockAi\Logging\InvocationLogger;
+use Ubxty\BedrockAi\Billing\CostExplorerService;
 use Ubxty\BedrockAi\Pricing\PricingService;
 use Ubxty\BedrockAi\Usage\UsageTracker;
 
@@ -30,6 +31,8 @@ class BedrockManager
     protected ?PricingService $pricing = null;
 
     protected ?UsageTracker $usage = null;
+
+    protected ?CostExplorerService $billing = null;
 
     protected ?ModelAliasResolver $aliasResolver = null;
 
@@ -425,6 +428,26 @@ class BedrockManager
         }
 
         return $this->pricing;
+    }
+
+    /**
+     * Get the Billing / Cost Explorer service.
+     */
+    public function billing(): CostExplorerService
+    {
+        if (! $this->billing) {
+            $billingConfig = $this->config['billing'] ?? [];
+            $fallbackKey = $this->getDefaultKey();
+
+            $this->billing = new CostExplorerService(
+                $billingConfig['aws_key'] ?: ($fallbackKey['aws_key'] ?? ''),
+                $billingConfig['aws_secret'] ?: ($fallbackKey['aws_secret'] ?? ''),
+                $billingConfig['region'] ?: ($fallbackKey['region'] ?? 'us-east-1'),
+                $this->config['cache']['billing_ttl'] ?? 3600
+            );
+        }
+
+        return $this->billing;
     }
 
     /**
