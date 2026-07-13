@@ -25,6 +25,7 @@ A Laravel package for seamless **AWS Bedrock** integration. One fluent API to in
   - [Default Models](#default-models)
   - [Provider Filtering](#provider-filtering)
   - [Cost Limits](#cost-limits)
+  - [Model Catalogue](#model-catalogue)
   - [Model Aliases](#model-aliases)
   - [Retry Behaviour](#retry-behaviour)
   - [Caching](#caching)
@@ -333,6 +334,77 @@ Enforce daily and monthly spending caps. When exceeded, a `CostLimitExceededExce
 BEDROCK_DAILY_LIMIT=10.00
 BEDROCK_MONTHLY_LIMIT=300.00
 ```
+
+---
+
+### Model Catalogue
+
+The list of models surfaced by `Bedrock::getModelsGrouped()`, `bedrock:models`, and the interactive pickers (`bedrock:test`, `bedrock:default-model`) is **config-driven** since 1.1.0 — no database table, no migration step.
+
+Configure models in `config/bedrock.php` under the `models` key. Two shapes are supported (flat is recommended; Bedrock model IDs are globally unique across regions):
+
+**Flat-indexed by model ID (recommended):**
+
+```php
+// config/bedrock.php
+'models' => [
+    'anthropic.claude-3-5-sonnet-20241022-v2:0' => [
+        'name'             => 'Claude 3.5 Sonnet v2',
+        'provider'         => 'Anthropic',
+        'context_window'   => 200000,
+        'max_tokens'       => 8192,
+        'capabilities'     => ['text'],
+        'input_modalities' => ['text'],
+        'is_active'        => true,
+    ],
+    'amazon.nova-pro-v1:0' => [
+        'name'             => 'Amazon Nova Pro',
+        'provider'         => 'Amazon',
+        'context_window'   => 300000,
+        'max_tokens'       => 5120,
+        'capabilities'     => ['text'],
+        'input_modalities' => ['text', 'image'],
+        'is_active'        => true,
+    ],
+],
+```
+
+**Per-connection** — useful when different regions serve different model sets:
+
+```php
+'models' => [
+    'default' => [
+        'anthropic.claude-3-5-sonnet-20241022-v2:0' => [ /* …spec… */ ],
+    ],
+    'secondary' => [
+        'amazon.nova-pro-v1:0' => [ /* …spec… */ ],
+    ],
+],
+```
+
+**Override via environment** — useful for staging/production without editing the file:
+
+```bash
+# .env
+BEDROCK_MODELS='{"anthropic.claude-3-5-sonnet-20241022-v2:0":{"provider":"Anthropic","context_window":200000,"max_tokens":8192,"capabilities":["text"],"input_modalities":["text"],"is_active":true}}'
+```
+
+**Fallback to live API** — if the `models` block is empty (the default), `Bedrock::getModelsGrouped()` falls back to a live call against the AWS Bedrock `ListFoundationModels` API, cached via Laravel cache for `cache.models_ttl` seconds (default 3600). You don't need to configure anything to get the full Bedrock catalogue.
+
+**`syncModels()` behaviour change** — since 1.1.0, `Bedrock::syncModels(?string $connection)` no longer writes to a database. It returns the count of models configured for the given connection (read from `config('bedrock.models')`). The signature and return type are unchanged for BC.
+
+**Available spec keys** (all optional except `model_id`, which is the array key in flat shape):
+
+| Key | Type | Default | Notes |
+|---|---|---|---|
+| `name` | string | `model_id` | Display name in pickers |
+| `provider` | string | `'Other'` | Used for grouping + `disabled_providers` filtering |
+| `context_window` | int | `0` | Tokens; shown in `bedrock:models` |
+| `max_tokens` | int | `0` | Max output tokens |
+| `capabilities` | string[] | `[]` | e.g. `['text', 'image']` |
+| `input_modalities` | string[] | `['text']` | e.g. `['text', 'image', 'document']` |
+| `is_active` | bool | `true` | Set false to hide from pickers |
+| `connection` | string | (none) | Flat shape only — pin this entry to a specific connection |
 
 ---
 
