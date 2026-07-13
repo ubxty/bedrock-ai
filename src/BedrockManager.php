@@ -2,30 +2,23 @@
 
 namespace Ubxty\BedrockAi;
 
-use Illuminate\Contracts\Cache\LockTimeoutException;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
+use Ubxty\BedrockAi\Billing\CostExplorerService;
 use Ubxty\BedrockAi\Client\BedrockClient;
 use Ubxty\BedrockAi\Client\ConverseClient;
 use Ubxty\BedrockAi\Client\CredentialManager;
-use Ubxty\BedrockAi\Client\ModelAliasResolver;
 use Ubxty\BedrockAi\Client\StreamingClient;
-use Ubxty\BedrockAi\Conversation\ConversationBuilder;
 use Ubxty\BedrockAi\Events\BedrockInvoked;
 use Ubxty\BedrockAi\Exceptions\BedrockException;
 use Ubxty\BedrockAi\Exceptions\ConfigurationException;
-use Ubxty\BedrockAi\Exceptions\CostLimitExceededException;
-use Ubxty\BedrockAi\Logging\InvocationLogger;
-use Ubxty\BedrockAi\Billing\CostExplorerService;
 use Ubxty\BedrockAi\Pricing\PricingService;
 use Ubxty\BedrockAi\Usage\UsageTracker;
+use Ubxty\CoreAi\Manager\AbstractAiManager;
 
-class BedrockManager
+class BedrockManager extends AbstractAiManager
 {
-    protected array $config;
-
     /** @var array<string, BedrockClient> */
     protected array $clients = [];
 
@@ -35,14 +28,14 @@ class BedrockManager
 
     protected ?CostExplorerService $billing = null;
 
-    protected ?ModelAliasResolver $aliasResolver = null;
-
-    protected ?InvocationLogger $logger = null;
-
     public function __construct(array $config)
     {
-        $this->config = $config;
+        parent::__construct($config);
     }
+
+    // ─────────────────────────────────────────────────────────
+    //  Lazy client factories (bedrock-specific accessors)
+    // ─────────────────────────────────────────────────────────
 
     /**
      * Get the Bedrock client for the given (or default) connection.
@@ -84,43 +77,6 @@ class BedrockManager
     }
 
     /**
-     * Invoke a model via the default connection.
-     * Supports model aliases, fires events, and logs invocations.
-     *
-     * @return array{response: string, input_tokens: int, output_tokens: int, total_tokens: int, cost: float, latency_ms: int, status: string, key_used: string}
-     */
-    public function invoke(
-        string $modelId = '',
-        string $systemPrompt = '',
-        string $userMessage = '',
-        int $maxTokens = 4096,
-        float $temperature = 0.7,
-        ?array $pricing = null,
-        ?string $connection = null
-    ): array {
-        $modelId = $modelId ?: $this->defaultModel();
-
-        if (! $modelId) {
-            throw new \Ubxty\BedrockAi\Exceptions\ConfigurationException(
-                'No model ID specified and no default model configured. ' .
-                'Set BEDROCK_DEFAULT_MODEL in your .env or pass a model ID explicitly.'
-            );
-        }
-
-        $this->checkCostLimits();
-
-        $modelId = $this->resolveAlias($modelId);
-
-        $result = $this->client($connection)->invoke($modelId, $systemPrompt, $userMessage, $maxTokens, $temperature, $pricing);
-
-        $this->trackCost($result['cost'] ?? 0);
-        $this->fireInvokedEvent($result);
-        $this->getLogger()->log($result);
-
-        return $result;
-    }
-
-    /**
      * Get a Converse API client for the given connection.
      */
     public function converseClient(?string $connection = null): ConverseClient
@@ -140,36 +96,6 @@ class BedrockManager
             $retryConfig['max_retries'] ?? 3,
             $retryConfig['base_delay'] ?? 2
         );
-    }
-
-    /**
-     * Send a conversation via the Converse API.
-     *
-     * @param array<int, array{role: string, content: string}> $messages
-     */
-    public function converse(
-        string $modelId,
-        array $messages,
-        string $systemPrompt = '',
-        int $maxTokens = 4096,
-        float $temperature = 0.7,
-        ?string $connection = null,
-        ?array $pricing = null
-    ): array {
-        $this->checkCostLimits();
-
-        $modelId = $this->resolveAlias($modelId);
-
-        $result = $this->converseClient($connection)->converse($modelId, $messages, $systemPrompt, $maxTokens, $temperature);
-
-        $cost = $this->calculateCost($result['input_tokens'] ?? 0, $result['output_tokens'] ?? 0, $pricing);
-        $result['cost'] = $cost;
-
-        $this->trackCost($cost);
-        $this->fireInvokedEvent($result);
-        $this->getLogger()->log($result);
-
-        return $result;
     }
 
     /**
@@ -194,6 +120,12 @@ class BedrockManager
             $this->config['defaults']['anthropic_version'] ?? 'bedrock-2023-05-31'
         );
     }
+
+    // ─────────────────────────────────────────────────────────
+    //  bedrock-only public stream() — raw streaming with chat-style
+    //  message order. Distinct from parent's converseStream() which
+    //  is the multi-turn templated stream.
+    // ─────────────────────────────────────────────────────────
 
     /**
      * Stream a model invocation with a callback for each chunk.
@@ -226,75 +158,85 @@ class BedrockManager
         return $result;
     }
 
+    // ─────────────────────────────────────────────────────────
+    //  AbstractAiManager: protected perform* hooks
+    // ─────────────────────────────────────────────────────────
+
     /**
-     * Stream a multi-turn conversation with a callback for each chunk.
+     * Bedrock Invoke API path. Parent's invoke() already checks cost
+     * limits, resolves aliases, calls performInvoke, tracks cost,
+     * fires the event, and logs the result.
      *
-     * @param array<int, array{role: string, content: string}> $messages
-     * @param callable(string $chunk): void $onChunk
+     * @return array{response: string, input_tokens: int, output_tokens: int, total_tokens: int, cost: float, latency_ms: int, status: string, key_used: string, model_id: string}
      */
-    public function converseStream(
+    protected function performInvoke(
+        string $modelId,
+        string $systemPrompt,
+        string $userMessage,
+        int $maxTokens,
+        float $temperature,
+        ?array $pricing,
+        ?string $connection
+    ): array {
+        return $this->client($connection)->invoke($modelId, $systemPrompt, $userMessage, $maxTokens, $temperature, $pricing);
+    }
+
+    /**
+     * Bedrock Converse API path with multi-turn messages.
+     *
+     * @param  array<int, array{role: string, content: string|array}>  $messages
+     * @return array{response: string, input_tokens: int, output_tokens: int, total_tokens: int, stop_reason: string, latency_ms: int, model_id: string, key_used: string}
+     */
+    protected function performConverse(
+        string $modelId,
+        array $messages,
+        string $systemPrompt,
+        int $maxTokens,
+        float $temperature,
+        ?string $connection
+    ): array {
+        return $this->converseClient($connection)->converse($modelId, $messages, $systemPrompt, $maxTokens, $temperature);
+    }
+
+    /**
+     * Bedrock Converse streaming path.
+     *
+     * @param  array<int, array{role: string, content: string|array}>  $messages
+     * @param  callable(string $chunk): void  $onChunk
+     */
+    protected function performConverseStream(
         string $modelId,
         array $messages,
         callable $onChunk,
-        string $systemPrompt = '',
-        int $maxTokens = 4096,
-        float $temperature = 0.7,
-        ?string $connection = null,
-        ?array $pricing = null
+        string $systemPrompt,
+        int $maxTokens,
+        float $temperature,
+        ?string $connection
     ): array {
-        $this->checkCostLimits();
-
-        $modelId = $this->resolveAlias($modelId);
-
-        $result = $this->streamingClient($connection)->converseStream($modelId, $messages, $onChunk, $systemPrompt, $maxTokens, $temperature);
-
-        $cost = $this->calculateCost($result['input_tokens'] ?? 0, $result['output_tokens'] ?? 0, $pricing);
-        $result['cost'] = $cost;
-
-        $this->trackCost($cost);
-        $this->fireInvokedEvent($result);
-        $this->getLogger()->log($result);
-
-        return $result;
+        return $this->streamingClient($connection)->converseStream($modelId, $messages, $onChunk, $systemPrompt, $maxTokens, $temperature);
     }
 
-    /**
-     * Start a fluent conversation builder.
-     */
-    public function conversation(string $modelId): ConversationBuilder
-    {
-        $modelId = $this->resolveAlias($modelId);
+    // ─────────────────────────────────────────────────────────
+    //  AbstractAiManager: public platform methods
+    // ─────────────────────────────────────────────────────────
 
-        return new ConversationBuilder($this, $modelId);
-    }
-
-    /**
-     * Test connection on the default (or given) connection.
-     */
     public function testConnection(?string $connection = null): array
     {
         return $this->client($connection)->testConnection();
     }
 
-    /**
-     * List available foundation models.
-     */
     public function listModels(?string $connection = null): array
     {
         return $this->client($connection)->listModels();
     }
 
-    /**
-     * Fetch models with normalized structure.
-     */
     public function fetchModels(?string $connection = null): array
     {
         return $this->client($connection)->fetchModels();
     }
 
     /**
-     * Sync models from AWS Bedrock into the database for offline browsing.
-     * Returns the count of models upserted.
+     * Sync models from AWS Bedrock into the bedrock_models table.
      */
     public function syncModels(?string $connection = null): int
     {
@@ -309,7 +251,7 @@ class BedrockManager
         }
 
         foreach ($models as $model) {
-            \Illuminate\Support\Facades\DB::table('bedrock_models')->upsert(
+            DB::table('bedrock_models')->upsert(
                 [
                     'model_id'         => $model['model_id'],
                     'name'             => $model['name'],
@@ -334,15 +276,11 @@ class BedrockManager
     }
 
     /**
-     * Get models from the database, grouped by provider.
-     * Falls back to a live fetch if the table is empty or doesn't exist.
-     *
-     * @return array<string, array<int, array>> Keyed by provider slug
+     * Read persisted bedrock_models rows into the normalised shape
+     * AbstractAiManager::getModelsGrouped() expects. Empty return
+     * signals parent to fall back to a live fetchModels() call.
      */
-    /**
-     * @param string|null $context  Optional context for context-scoped provider filtering: 'chat' or 'image'.
-     */
-    public function getModelsGrouped(?string $connection = null, ?string $context = null): array
+    protected function fetchModelsForGrouping(?string $connection): array
     {
         try {
             $rows = DB::table('bedrock_models')
@@ -368,52 +306,106 @@ class BedrockManager
             $rows = [];
         }
 
-        if (empty($rows)) {
-            $rows = $this->fetchModels($connection);
-        }
-
-        $grouped = [];
-        foreach ($rows as $model) {
-            $provider = $model['provider'] ?: (explode('.', $model['model_id'])[0] ?? 'Other');
-            $grouped[$provider][] = $model;
-        }
-
-        // Build the effective disabled list: global + context-scoped (chat/image).
-        $globalDisabled = array_filter((array) ($this->config['providers']['disabled_providers'] ?? []));
-        $contextDisabled = $context
-            ? array_filter((array) ($this->config['providers'][$context]['disabled_providers'] ?? []))
-            : [];
-
-        $disabled = array_map('strtolower', array_merge($globalDisabled, $contextDisabled));
-
-        if (! empty($disabled)) {
-            $grouped = array_filter(
-                $grouped,
-                fn (string $provider) => ! in_array(strtolower($provider), $disabled, true),
-                ARRAY_FILTER_USE_KEY
-            );
-        }
-
-        ksort($grouped);
-
-        return $grouped;
+        return $rows;
     }
 
     /**
-     * Get the configured default chat model ID (from BEDROCK_DEFAULT_MODEL env).
+     * Configuration check delegates normalization to CredentialManager
+     * to handle bearer mode auto-detection.
      */
-    public function defaultModel(): string
+    public function isConfigured(?string $connection = null): bool
     {
-        return $this->config['defaults']['model'] ?? '';
+        $connection ??= $this->config['default'] ?? 'default';
+        $connectionConfig = $this->config['connections'][$connection] ?? null;
+
+        if (! $connectionConfig) {
+            return false;
+        }
+
+        $keys = $connectionConfig['keys'] ?? [];
+
+        if (empty($keys)) {
+            return false;
+        }
+
+        try {
+            $cm = new CredentialManager($keys);
+        } catch (\Exception $e) {
+            return false;
+        }
+
+        $key = $cm->current();
+
+        return $key['auth_mode'] === 'bearer'
+            ? ! empty($key['bearer_token'])
+            : ! empty($key['aws_key']) && ! empty($key['aws_secret']);
+    }
+
+    public function supportsStreaming(?string $connection = null): bool
+    {
+        return true;
+    }
+
+    public function getCredentialInfo(?string $connection = null): array
+    {
+        return $this->client($connection)->getCredentialManager()->list();
+    }
+
+    public function platformName(): string
+    {
+        return 'AWS Bedrock';
+    }
+
+    // ─────────────────────────────────────────────────────────
+    //  Template-method overrides (BC + platform-specific)
+    // ─────────────────────────────────────────────────────────
+
+    /**
+     * Cache key prefix is locked to "bedrock_ai" so that in-flight
+     * daily/monthly cost counters and the cost-lock key survive
+     * the migration to AbstractAiManager.
+     */
+    protected function cachePrefix(): string
+    {
+        return 'bedrock_ai';
     }
 
     /**
-     * Get the configured default image model ID (from BEDROCK_DEFAULT_IMAGE_MODEL env).
+     * Fire a BedrockInvoked event instead of the parent's AiInvoked,
+     * preserving listener BC.
      */
-    public function defaultImageModel(): string
+    protected function fireInvokedEvent(array $result): void
     {
-        return $this->config['defaults']['image_model'] ?? '';
+        if (function_exists('event')) {
+            event(new BedrockInvoked(
+                modelId: $result['model_id'] ?? 'unknown',
+                inputTokens: $result['input_tokens'] ?? 0,
+                outputTokens: $result['output_tokens'] ?? 0,
+                cost: $result['cost'] ?? 0,
+                latencyMs: $result['latency_ms'] ?? 0,
+                keyUsed: $result['key_used'] ?? 'unknown',
+            ));
+        }
     }
+
+    /**
+     * Bedrock cost calc accepts a permissive shape — same defaults
+     * as the parent, retained here for explicit overridability.
+     */
+    protected function calculateCost(int $inputTokens, int $outputTokens, ?array $pricing = null): float
+    {
+        $inputPrice = $pricing['input_price_per_1k'] ?? 0.003;
+        $outputPrice = $pricing['output_price_per_1k'] ?? 0.015;
+
+        return round(
+            ($inputTokens / 1000) * $inputPrice + ($outputTokens / 1000) * $outputPrice,
+            6
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────
+    //  Bedrock-specific public accessors
+    // ─────────────────────────────────────────────────────────
 
     /**
      * Get the Pricing service.
@@ -475,178 +467,10 @@ class BedrockManager
     }
 
     /**
-     * Get the model alias resolver.
-     */
-    public function aliases(): ModelAliasResolver
-    {
-        if (! $this->aliasResolver) {
-            $this->aliasResolver = new ModelAliasResolver($this->config['aliases'] ?? []);
-        }
-
-        return $this->aliasResolver;
-    }
-
-    /**
-     * Resolve a model alias to its full model ID.
-     */
-    public function resolveAlias(string $modelIdOrAlias): string
-    {
-        return $this->aliases()->resolve($modelIdOrAlias);
-    }
-
-    /**
-     * Get the invocation logger.
-     */
-    public function getLogger(): InvocationLogger
-    {
-        if (! $this->logger) {
-            $loggingConfig = $this->config['logging'] ?? [];
-            $this->logger = new InvocationLogger(
-                $loggingConfig['enabled'] ?? false,
-                $loggingConfig['channel'] ?? 'stack'
-            );
-        }
-
-        return $this->logger;
-    }
-
-    /**
-     * Get the full configuration.
-     */
-    public function getConfig(): array
-    {
-        return $this->config;
-    }
-
-    /**
-     * Check if the default connection is configured.
-     * Delegates normalization to CredentialManager to handle bearer mode auto-detection.
-     */
-    public function isConfigured(?string $connection = null): bool
-    {
-        $connection ??= $this->config['default'] ?? 'default';
-        $connectionConfig = $this->config['connections'][$connection] ?? null;
-
-        if (! $connectionConfig) {
-            return false;
-        }
-
-        $keys = $connectionConfig['keys'] ?? [];
-
-        if (empty($keys)) {
-            return false;
-        }
-
-        try {
-            $cm = new CredentialManager($keys);
-        } catch (\Exception $e) {
-            return false;
-        }
-
-        $key = $cm->current();
-
-        return $key['auth_mode'] === 'bearer'
-            ? ! empty($key['bearer_token'])
-            : ! empty($key['aws_key']) && ! empty($key['aws_secret']);
-    }
-
-    /**
      * Check if the default (or given) connection uses Bearer token authentication.
      */
     public function isBearerMode(?string $connection = null): bool
     {
         return $this->client($connection)->getCredentialManager()->isBearerMode();
-    }
-
-    /**
-     * Get the first key from the default connection (used as fallback for pricing/usage).
-     */
-    protected function getDefaultKey(): array
-    {
-        $connection = $this->config['default'] ?? 'default';
-        $keys = $this->config['connections'][$connection]['keys'] ?? [];
-
-        return $keys[0] ?? [];
-    }
-
-    /**
-     * Check cost limits before making an invocation.
-     */
-    protected function checkCostLimits(): void
-    {
-        $dailyLimit = $this->config['limits']['daily'] ?? null;
-        $monthlyLimit = $this->config['limits']['monthly'] ?? null;
-
-        if ($dailyLimit !== null) {
-            $dailyCost = (float) Cache::get('bedrock_ai_daily_cost_' . now()->format('Y-m-d'), 0);
-
-            if ($dailyCost >= (float) $dailyLimit) {
-                throw new CostLimitExceededException('daily', (float) $dailyLimit, $dailyCost);
-            }
-        }
-
-        if ($monthlyLimit !== null) {
-            $monthlyCost = (float) Cache::get('bedrock_ai_monthly_cost_' . now()->format('Y-m'), 0);
-
-            if ($monthlyCost >= (float) $monthlyLimit) {
-                throw new CostLimitExceededException('monthly', (float) $monthlyLimit, $monthlyCost);
-            }
-        }
-    }
-
-    /**
-     * Track cost after a successful invocation.
-     * Uses an atomic lock to prevent race conditions under concurrent requests.
-     */
-    protected function trackCost(float $cost): void
-    {
-        if ($cost <= 0) {
-            return;
-        }
-
-        $dailyKey = 'bedrock_ai_daily_cost_' . now()->format('Y-m-d');
-        $monthlyKey = 'bedrock_ai_monthly_cost_' . now()->format('Y-m');
-
-        try {
-            Cache::lock('bedrock_ai_cost_lock', 5)->block(2, function () use ($dailyKey, $monthlyKey, $cost) {
-                Cache::put($dailyKey, (float) Cache::get($dailyKey, 0) + $cost, now()->endOfDay());
-                Cache::put($monthlyKey, (float) Cache::get($monthlyKey, 0) + $cost, now()->endOfMonth());
-            });
-        } catch (LockTimeoutException $e) {
-            // Lock timeout - fall back to non-atomic update (minor inaccuracy possible under extreme concurrency)
-            Cache::put($dailyKey, (float) Cache::get($dailyKey, 0) + $cost, now()->endOfDay());
-            Cache::put($monthlyKey, (float) Cache::get($monthlyKey, 0) + $cost, now()->endOfMonth());
-        }
-    }
-
-    /**
-     * Fire a BedrockInvoked event if the event dispatcher is available.
-     */
-    protected function fireInvokedEvent(array $result): void
-    {
-        if (function_exists('event')) {
-            event(new BedrockInvoked(
-                modelId: $result['model_id'] ?? 'unknown',
-                inputTokens: $result['input_tokens'] ?? 0,
-                outputTokens: $result['output_tokens'] ?? 0,
-                cost: $result['cost'] ?? 0,
-                latencyMs: $result['latency_ms'] ?? 0,
-                keyUsed: $result['key_used'] ?? 'unknown',
-            ));
-        }
-    }
-
-    /**
-     * Calculate the cost of an invocation from token counts.
-     */
-    protected function calculateCost(int $inputTokens, int $outputTokens, ?array $pricing = null): float
-    {
-        $inputPrice = $pricing['input_price_per_1k'] ?? 0.003;
-        $outputPrice = $pricing['output_price_per_1k'] ?? 0.015;
-
-        return round(
-            ($inputTokens / 1000) * $inputPrice + ($outputTokens / 1000) * $outputPrice,
-            6
-        );
     }
 }
