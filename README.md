@@ -141,13 +141,13 @@ This package handles all of that behind a single, consistent API so you can focu
 composer require ubxty/bedrock-ai
 ```
 
-Publish the configuration file:
+Publish the consolidated configuration file (includes Bedrock + Azure OpenAI sections):
 
 ```bash
-php artisan vendor:publish --tag=bedrock-config
+php artisan vendor:publish --tag=core-ai-config
 ```
 
-No database migration is required. The model catalogue is config-driven (see the `models` block in `config/bedrock.php`); if left empty, the package falls back to a live call against the AWS Bedrock ListFoundationModels API.
+Bedrock settings live under the `bedrock` key in `config/core-ai.php` (e.g. `core-ai.bedrock.connections.default.keys`). No database migration is required. The model catalogue is config-driven (see the `bedrock.models` block); if left empty, the package falls back to a live call against the AWS Bedrock ListFoundationModels API.
 
 Or run the interactive setup wizard to configure everything at once:
 

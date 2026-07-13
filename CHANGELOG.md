@@ -6,6 +6,31 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and 
 
 ---
 
+## [2.0.0] - 2026-07-13
+
+### BREAKING CHANGES
+
+- **Consolidated config in `core-ai`.** Bedrock-specific config previously in `config/bedrock.php` is now in `config/core-ai.php` under the `bedrock` key. Host apps that published the old `bedrock-config` tag must republish via `core-ai-config` and merge their overrides under the new namespace.
+- **Config namespace change.** `config('bedrock.*')` is now `config('core-ai.bedrock.*')`. Update any direct references in your application code.
+- **Publish tag `bedrock-config` removed.** Only `core-ai-config` is published.
+- **Requires `ubxty/core-ai ^2.0`** (companion 2.0.0 release).
+
+### Removed
+- `config/bedrock.php` — moved to core-ai's `core-ai.php` under the `bedrock` key.
+
+### Changed
+- `BedrockAiServiceProvider::register()` — `BedrockManager` singleton now binds from `config('core-ai.bedrock', [])` instead of `config('bedrock', [])`.
+- `BedrockAiServiceProvider::boot()` — no longer publishes `bedrock-config`; that tag lives in `ubxty/core-ai`.
+- `Commands\ConfigureCommand` — `config('bedrock.retry')` / `config('bedrock.defaults')` namespace refs updated to `config('core-ai.bedrock.*')`.
+
+### Migration from 1.x
+1. `composer require ubxty/bedrock-ai:^2.0` (auto-pulls `ubxty/core-ai ^2.0`)
+2. `php artisan vendor:publish --tag=core-ai-config` to publish the new consolidated config
+3. Move any customisations from `config/bedrock.php` into `config/core-ai.php` under the `bedrock` key
+4. In your application code, replace `config('bedrock.*')` with `config('core-ai.bedrock.*')`
+
+---
+
 ## [1.1.0] - 2026-07-13
 
 ### Removed

@@ -161,8 +161,8 @@ class ConfigureCommand extends Command
                         ]],
                     ],
                 ],
-                'retry' => config('bedrock.retry', []),
-                'defaults' => config('bedrock.defaults', []),
+                'retry' => config('core-ai.bedrock.retry', []),
+                'defaults' => config('core-ai.bedrock.defaults', []),
             ];
 
             $testManager = new BedrockManager($testConfig);

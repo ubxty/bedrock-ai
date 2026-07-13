@@ -9,10 +9,8 @@ class BedrockAiServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
-        $this->mergeConfigFrom(__DIR__ . '/../config/bedrock.php', 'bedrock');
-
         $this->app->singleton(BedrockManager::class, function ($app) {
-            return new BedrockManager($app['config']->get('bedrock', []));
+            return new BedrockManager($app['config']->get('core-ai.bedrock', []));
         });
 
         $this->app->alias(BedrockManager::class, 'bedrock');
@@ -21,10 +19,6 @@ class BedrockAiServiceProvider extends ServiceProvider
     public function boot(): void
     {
         if ($this->app->runningInConsole()) {
-            $this->publishes([
-                __DIR__ . '/../config/bedrock.php' => config_path('bedrock.php'),
-            ], 'bedrock-config');
-
             $this->commands([
                 Commands\ChatCommand::class,
                 Commands\ConfigureCommand::class,
