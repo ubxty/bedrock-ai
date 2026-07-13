@@ -2,16 +2,28 @@
 /composer.lock
 /.phpunit.cache/
 /.idea/
-/.vscode/
+/vscode/
 *.swp
 *.swo
 .DS_Store
+
+# secrets / env
+.env
+.env.*
+!.env.example
+
+# private keys / certs
+*.pem
+*.key
+*.crt
+*.p12
+
+# audit scratch
+bugs*.md
+BUGS*.MD
+test_*.php
+test_*.log
 test_integration.php
-bugs.md
-BUGS2.MD
-bugs3.md
 tests/400.png
 tests/test_vision.php
-test_prefix.php
-test_all_models.php
 test_pdf_parsing.php
