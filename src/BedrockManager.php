@@ -5,6 +5,7 @@ namespace Ubxty\BedrockAi;
 use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Ubxty\BedrockAi\Client\BedrockClient;
 use Ubxty\BedrockAi\Client\ConverseClient;
@@ -344,7 +345,7 @@ class BedrockManager
     public function getModelsGrouped(?string $connection = null, ?string $context = null): array
     {
         try {
-            $rows = \Illuminate\Support\Facades\DB::table('bedrock_models')
+            $rows = DB::table('bedrock_models')
                 ->when($connection, fn ($q) => $q->where('connection', $connection))
                 ->orderBy('provider')
                 ->orderBy('name')
@@ -360,7 +361,10 @@ class BedrockManager
                     'is_active'        => (bool) $row->is_active,
                 ])
                 ->all();
-        } catch (\Throwable) {
+        } catch (\Throwable $e) {
+            Log::warning('bedrock-ai: failed to read bedrock_models table, falling back to live fetch', [
+                'exception' => $e->getMessage(),
+            ]);
             $rows = [];
         }
 
@@ -574,7 +578,7 @@ class BedrockManager
         $monthlyLimit = $this->config['limits']['monthly'] ?? null;
 
         if ($dailyLimit !== null) {
-            $dailyCost = (float) Cache::get('bedrock_ai_daily_cost_' . date('Y-m-d'), 0);
+            $dailyCost = (float) Cache::get('bedrock_ai_daily_cost_' . now()->format('Y-m-d'), 0);
 
             if ($dailyCost >= (float) $dailyLimit) {
                 throw new CostLimitExceededException('daily', (float) $dailyLimit, $dailyCost);
@@ -582,7 +586,7 @@ class BedrockManager
         }
 
         if ($monthlyLimit !== null) {
-            $monthlyCost = (float) Cache::get('bedrock_ai_monthly_cost_' . date('Y-m'), 0);
+            $monthlyCost = (float) Cache::get('bedrock_ai_monthly_cost_' . now()->format('Y-m'), 0);
 
             if ($monthlyCost >= (float) $monthlyLimit) {
                 throw new CostLimitExceededException('monthly', (float) $monthlyLimit, $monthlyCost);
@@ -600,8 +604,8 @@ class BedrockManager
             return;
         }
 
-        $dailyKey = 'bedrock_ai_daily_cost_' . date('Y-m-d');
-        $monthlyKey = 'bedrock_ai_monthly_cost_' . date('Y-m');
+        $dailyKey = 'bedrock_ai_daily_cost_' . now()->format('Y-m-d');
+        $monthlyKey = 'bedrock_ai_monthly_cost_' . now()->format('Y-m');
 
         try {
             Cache::lock('bedrock_ai_cost_lock', 5)->block(2, function () use ($dailyKey, $monthlyKey, $cost) {
