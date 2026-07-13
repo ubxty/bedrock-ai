@@ -6,11 +6,11 @@ use PHPUnit\Framework\TestCase;
 use Ubxty\BedrockAi\BedrockManager;
 use Ubxty\BedrockAi\Client\BedrockClient;
 use Ubxty\BedrockAi\Client\ConverseClient;
-use Ubxty\BedrockAi\Client\ModelAliasResolver;
 use Ubxty\BedrockAi\Client\StreamingClient;
-use Ubxty\BedrockAi\Conversation\ConversationBuilder;
 use Ubxty\BedrockAi\Exceptions\ConfigurationException;
-use Ubxty\BedrockAi\Logging\InvocationLogger;
+use Ubxty\CoreAi\Client\ModelAliasResolver;
+use Ubxty\CoreAi\Conversation\ConversationBuilder;
+use Ubxty\CoreAi\Logging\InvocationLogger;
 
 class BedrockManagerTest extends TestCase
 {

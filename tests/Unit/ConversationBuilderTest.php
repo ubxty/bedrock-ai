@@ -4,7 +4,7 @@ namespace Ubxty\BedrockAi\Tests\Unit;
 
 use PHPUnit\Framework\TestCase;
 use Ubxty\BedrockAi\BedrockManager;
-use Ubxty\BedrockAi\Conversation\ConversationBuilder;
+use Ubxty\CoreAi\Conversation\ConversationBuilder;
 use Ubxty\BedrockAi\Exceptions\BedrockException;
 
 class ConversationBuilderTest extends TestCase

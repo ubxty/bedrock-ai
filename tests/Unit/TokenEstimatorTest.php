@@ -3,7 +3,7 @@
 namespace Ubxty\BedrockAi\Tests\Unit;
 
 use PHPUnit\Framework\TestCase;
-use Ubxty\BedrockAi\Support\TokenEstimator;
+use Ubxty\CoreAi\Support\TokenEstimator;
 
 class TokenEstimatorTest extends TestCase
 {

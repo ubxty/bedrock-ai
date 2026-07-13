@@ -3,7 +3,7 @@
 namespace Ubxty\BedrockAi\Tests\Unit;
 
 use PHPUnit\Framework\TestCase;
-use Ubxty\BedrockAi\Models\ModelSpecResolver;
+use Ubxty\CoreAi\Models\ModelSpecResolver;
 
 class ModelSpecResolverTest extends TestCase
 {

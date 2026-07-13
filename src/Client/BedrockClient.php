@@ -10,7 +10,7 @@ use Ubxty\BedrockAi\Events\BedrockKeyRotated;
 use Ubxty\BedrockAi\Events\BedrockRateLimited;
 use Ubxty\BedrockAi\Exceptions\BedrockException;
 use Ubxty\BedrockAi\Exceptions\RateLimitException;
-use Ubxty\BedrockAi\Models\ModelSpecResolver;
+use Ubxty\CoreAi\Models\ModelSpecResolver;
 
 class BedrockClient
 {

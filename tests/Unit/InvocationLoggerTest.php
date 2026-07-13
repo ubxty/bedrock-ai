@@ -3,7 +3,7 @@
 namespace Ubxty\BedrockAi\Tests\Unit;
 
 use PHPUnit\Framework\TestCase;
-use Ubxty\BedrockAi\Logging\InvocationLogger;
+use Ubxty\CoreAi\Logging\InvocationLogger;
 
 class InvocationLoggerTest extends TestCase
 {
