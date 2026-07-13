@@ -25,10 +25,6 @@ class BedrockAiServiceProvider extends ServiceProvider
                 __DIR__ . '/../config/bedrock.php' => config_path('bedrock.php'),
             ], 'bedrock-config');
 
-            $this->publishes([
-                __DIR__ . '/../database/migrations/' => database_path('migrations'),
-            ], 'bedrock-migrations');
-
             $this->commands([
                 Commands\ChatCommand::class,
                 Commands\ConfigureCommand::class,
@@ -39,8 +35,6 @@ class BedrockAiServiceProvider extends ServiceProvider
                 Commands\DefaultModelCommand::class,
             ]);
         }
-
-        $this->loadMigrationsFrom(__DIR__ . '/../database/migrations');
 
         $this->registerHealthCheckRoute();
     }

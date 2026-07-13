@@ -2,16 +2,12 @@
 
 namespace Ubxty\BedrockAi;
 
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Schema;
 use Ubxty\BedrockAi\Billing\CostExplorerService;
 use Ubxty\BedrockAi\Client\BedrockClient;
 use Ubxty\BedrockAi\Client\ConverseClient;
 use Ubxty\BedrockAi\Client\CredentialManager;
 use Ubxty\BedrockAi\Client\StreamingClient;
 use Ubxty\BedrockAi\Events\BedrockInvoked;
-use Ubxty\BedrockAi\Exceptions\BedrockException;
 use Ubxty\BedrockAi\Exceptions\ConfigurationException;
 use Ubxty\BedrockAi\Pricing\PricingService;
 use Ubxty\BedrockAi\Usage\UsageTracker;
@@ -236,77 +232,77 @@ class BedrockManager extends AbstractAiManager
     }
 
     /**
-     * Sync models from AWS Bedrock into the bedrock_models table.
+     * Sync models for the given connection.
+     *
+     * Since 1.1.0, the catalogue is config-driven (see config/bedrock.php
+     * `models` block). This method returns the count of models configured
+     * for the connection. {@see AbstractAiManager::getModelsGrouped()}
+     * falls back to a live {@see fetchModels()} call when config is empty.
      */
     public function syncModels(?string $connection = null): int
     {
         $connection ??= $this->config['default'] ?? 'default';
-        $models = $this->fetchModels($connection);
-        $now = now();
 
-        if (! Schema::hasTable('bedrock_models')) {
-            throw new BedrockException(
-                'The bedrock_models table does not exist. Run: php artisan migrate'
-            );
-        }
-
-        foreach ($models as $model) {
-            DB::table('bedrock_models')->upsert(
-                [
-                    'model_id'         => $model['model_id'],
-                    'name'             => $model['name'],
-                    'provider'         => $model['provider'],
-                    'connection'       => $connection,
-                    'context_window'   => $model['context_window'],
-                    'max_tokens'       => $model['max_tokens'],
-                    'capabilities'     => json_encode($model['capabilities']),
-                    'input_modalities' => json_encode($model['input_modalities'] ?? ['text']),
-                    'is_active'        => $model['is_active'] ? 1 : 0,
-                    'lifecycle_status' => $model['is_active'] ? 'ACTIVE' : 'LEGACY',
-                    'synced_at'        => $now,
-                    'created_at'       => $now,
-                    'updated_at'       => $now,
-                ],
-                ['model_id'],
-                ['name', 'provider', 'connection', 'context_window', 'max_tokens', 'capabilities', 'input_modalities', 'is_active', 'lifecycle_status', 'synced_at', 'updated_at']
-            );
-        }
-
-        return count($models);
+        return count($this->getConfiguredModels($connection));
     }
 
     /**
-     * Read persisted bedrock_models rows into the normalised shape
+     * Read configured models into the normalised shape
      * AbstractAiManager::getModelsGrouped() expects. Empty return
      * signals parent to fall back to a live fetchModels() call.
      */
     protected function fetchModelsForGrouping(?string $connection): array
     {
-        try {
-            $rows = DB::table('bedrock_models')
-                ->when($connection, fn ($q) => $q->where('connection', $connection))
-                ->orderBy('provider')
-                ->orderBy('name')
-                ->get()
-                ->map(fn ($row) => [
-                    'model_id'         => $row->model_id,
-                    'name'             => $row->name,
-                    'provider'         => $row->provider,
-                    'context_window'   => $row->context_window,
-                    'max_tokens'       => $row->max_tokens,
-                    'capabilities'     => json_decode($row->capabilities, true) ?? [],
-                    'input_modalities' => json_decode($row->input_modalities ?? 'null', true) ?? ['text'],
-                    'is_active'        => (bool) $row->is_active,
-                ])
-                ->all();
-        } catch (\Throwable $e) {
-            Log::warning('bedrock-ai: failed to read bedrock_models table, falling back to live fetch', [
-                'exception' => $e->getMessage(),
-            ]);
-            $rows = [];
+        $models = $this->getConfiguredModels($connection ?? $this->config['default'] ?? 'default');
+
+        return array_values(array_map(
+            fn (string $modelId, array $spec): array => [
+                'model_id'         => $modelId,
+                'name'             => $spec['name'] ?? $modelId,
+                'provider'         => $spec['provider'] ?? 'Other',
+                'context_window'   => (int) ($spec['context_window'] ?? 0),
+                'max_tokens'       => (int) ($spec['max_tokens'] ?? 0),
+                'capabilities'     => (array) ($spec['capabilities'] ?? []),
+                'input_modalities' => (array) ($spec['input_modalities'] ?? ['text']),
+                'is_active'        => (bool) ($spec['is_active'] ?? true),
+            ],
+            array_keys($models),
+            array_values($models),
+        ));
+    }
+
+    /**
+     * Read models for a connection from the config `models` block.
+     *
+     * Supports two shapes:
+     *   1. Per-connection: ['default' => ['anthropic.…' => ['provider' => '…']]]
+     *   2. Flat-indexed-by-model_id (model IDs are globally unique across Bedrock
+     *      regions): ['anthropic.…' => ['provider' => '…']]
+     *
+     * In the flat shape, an entry with `'connection' => 'other'` is filtered
+     * out when querying for `'default'`.
+     *
+     * @return array<string, array<string, mixed>>
+     */
+    protected function getConfiguredModels(string $connection): array
+    {
+        $all = $this->config['models'] ?? [];
+
+        if (! is_array($all)) {
+            return [];
         }
 
-        return $rows;
+        // Per-connection shape: top-level key is the connection name.
+        if (isset($all[$connection]) && is_array($all[$connection])) {
+            return $all[$connection];
+        }
+
+        // Flat shape: filter entries whose explicit 'connection' pin does not match.
+        return array_filter(
+            $all,
+            fn ($spec) => is_array($spec)
+                && (! isset($spec['connection']) || $spec['connection'] === $connection),
+        );
     }
 
     /**

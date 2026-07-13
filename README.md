@@ -117,7 +117,7 @@ This package handles all of that behind a single, consistent API so you can focu
 | **CloudWatch usage** | Token counts, invocation counts, latency from CloudWatch metrics |
 | **Real-time pricing** | Current per-token pricing from the AWS Pricing API |
 | **Health check route** | Registerable `/health/bedrock` endpoint for uptime monitoring |
-| **Database model cache** | Sync models to a local DB table for fast offline lookups |
+| **Config-driven model catalogue** | Define models in `config/bedrock.php` (or `BEDROCK_MODELS` env); falls back to live AWS ListFoundationModels API |
 | **7 CLI commands** | Configure, test, list models, set default models, chat, usage, and pricing |
 | **System prompt auto-folding** | Automatically retries with system prompt injected into first user message for models that reject system blocks (Mixtral, Mistral 7B) |
 
@@ -146,12 +146,7 @@ Publish the configuration file:
 php artisan vendor:publish --tag=bedrock-config
 ```
 
-Publish and run the database migrations (needed for the model sync and interactive pickers):
-
-```bash
-php artisan vendor:publish --tag=bedrock-migrations
-php artisan migrate
-```
+No database migration is required. The model catalogue is config-driven (see the `models` block in `config/bedrock.php`); if left empty, the package falls back to a live call against the AWS Bedrock ListFoundationModels API.
 
 Or run the interactive setup wizard to configure everything at once:
 
@@ -773,8 +768,9 @@ foreach ($models as $model) {
     echo "{$model['name']} — {$model['context_window']}k context\n";
 }
 
-// Sync to the local DB table for fast offline lookups and the interactive pickers
-Bedrock::syncModels();
+// Sync returns the count of models configured for the connection
+// (config-driven since 1.1.0 — no DB write)
+$count = Bedrock::syncModels();
 
 // Grouped by provider with optional context-scoped filtering
 $grouped = Bedrock::getModelsGrouped(context: 'chat');   // 'chat', 'image', or null
@@ -1300,7 +1296,7 @@ Bedrock::invoke('cohere.command-r-plus-v1:0', $system, $message);       // Coher
 | `testConnection(?string $connection)` | `array` | Test connection and return model count |
 | `listModels(?string $connection)` | `array` | Raw model summaries from AWS |
 | `fetchModels(?string $connection)` | `array` | Normalised models with specs |
-| `syncModels(?string $connection)` | `int` | Sync models to DB; returns upserted count |
+| `syncModels(?string $connection)` | `int` | Count of models configured for the connection (config-only since 1.1.0; no DB write) |
 | `getModelsGrouped(?string $context)` | `array` | Models grouped by provider with filtering |
 | `pricing()` | `PricingService` | Get the pricing service |
 | `usage()` | `UsageTracker` | Get the usage tracker |

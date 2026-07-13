@@ -6,6 +6,26 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and 
 
 ---
 
+## [1.1.0] - 2026-07-13
+
+### Removed
+- **`bedrock_models` database table** and its migrations (`create_bedrock_models_table`, `add_input_modalities_to_bedrock_models_table`). Models are now defined in config only. The host app no longer runs a migration to install this package.
+- **`BedrockAiServiceProvider`** no longer publishes or auto-loads migrations (`bedrock-migrations` tag removed).
+
+### Changed
+- **`BedrockManager::syncModels()`** — no longer writes to DB. Returns the count of models configured for the given connection (read from `config('bedrock.models')`). Signature and return type unchanged for BC.
+- **`BedrockManager::fetchModelsForGrouping()`** — reads from `config('bedrock.models')` instead of the DB. Empty array still triggers the parent's live `fetchModels()` fallback (cached AWS ListFoundationModels API call).
+- **`BedrockManager`** dropped unused `DB`, `Schema`, `Log`, and `BedrockException` imports.
+
+### Added
+- **`config/bedrock.php` `models` block** — keyed by Bedrock model ID. Supports flat-indexed and per-connection shapes. Override via `BEDROCK_MODELS` env (JSON). See config comments for shape examples.
+
+### Migration from <= 1.0.x
+1. Drop the table: `php artisan migrate:rollback --path=vendor/ubxty/bedrock-ai/database/migrations` (or drop manually).
+2. Move any previously-synced models into `config/bedrock.php` under the new `'models'` key.
+
+---
+
 ## [0.0.13] - 2026-04-10
 
 ### Fixed

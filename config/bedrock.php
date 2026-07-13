@@ -187,6 +187,48 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Model Catalogue
+    |--------------------------------------------------------------------------
+    |
+    | Define the models you want surfaced by {@see BedrockManager::getModelsGrouped()}.
+    | Two shapes are supported (flat is recommended — Bedrock model IDs are
+    | globally unique across regions):
+    |
+    |   Flat (recommended):
+    |     'models' => [
+    |       'anthropic.claude-3-5-sonnet-20241022-v2:0' => [
+    |         'name' => 'Claude 3.5 Sonnet v2', 'provider' => 'Anthropic',
+    |         'context_window' => 200000, 'max_tokens' => 8192,
+    |         'capabilities' => ['text'], 'input_modalities' => ['text'],
+    |         'is_active' => true,
+    |       ],
+    |     ],
+    |
+    |   Per-connection:
+    |     'models' => [
+    |       'default' => [ 'anthropic.…' => [ … ] ],
+    |       'secondary' => [ 'anthropic.…' => [ … ] ],
+    |     ],
+    |
+    | In the flat shape, an entry with an explicit `'connection' => '…'` key
+    | is filtered out when querying other connections.
+    |
+    | Leave empty to fall back to a live call against the AWS Bedrock
+    | ListFoundationModels API (cached via Laravel cache for cache.models_ttl).
+    |
+    | Override via BEDROCK_MODELS env (JSON):
+    |   BEDROCK_MODELS='{"anthropic.claude-3-5-sonnet-20241022-v2:0":{"provider":"Anthropic",…}}'
+    |
+    */
+    'models' => array_filter([
+        'default' => array_filter(array_map(
+            fn ($m) => is_array($m) ? $m : null,
+            json_decode((string) env('BEDROCK_MODELS', '[]'), true) ?: [],
+        )),
+    ]),
+
+    /*
+    |--------------------------------------------------------------------------
     | Invocation Logging
     |--------------------------------------------------------------------------
     |
