@@ -444,6 +444,12 @@ BEDROCK_RETRY_DELAY=2       # base delay in seconds; doubles each retry
 
 `max_retries=3` with `base_delay=2` → waits 2s, 4s, 8s before rotating to the next key.
 
+#### `Retry-After` honouring (v2.1.0+)
+
+When the upstream returns a `429: Too Many Requests`, the Bearer-token HTTP path captures the `Retry-After` header (seconds) and feeds it to `HasRetryLogic::withRetry()`, where it is preferred over the exponential backoff. With an upstream hint, recovery is often 5-30 s instead of the 14 s the exponential path takes. Each retry consumes one hint; if a subsequent attempt also 429s, the path tries to capture a fresh `Retry-After`.
+
+IAM (SDK) mode goes through `ThrottlingException` without a header — the exponential path is used.
+
 ---
 
 ### Prompt Caching (v2.1.0+)
@@ -468,19 +474,80 @@ Or in `config/core-ai.php`:
 
 Supported anchors: `system` (after the system prompt blocks) and `last_user` (after the last user message's content blocks). Empty `points` disables. Not all models support caching — the Bedrock runtime returns a 400 if a checkpoint is placed on an unsupported model.
 
+Up to 4 checkpoints per Converse request (Bedrock limit). The package adds only anchors you configure, so 2 is well within budget. See [`docs/caching-strategy.md`](docs/caching-strategy.md) for a side-by-side cost comparison and the TTL max (3600 s = 1 h).
+
 ---
 
 ### Caching
 
 ```php
-'cache' => [
-    'pricing_ttl' => 86400,  // 24 hours
-    'usage_ttl'   => 900,    // 15 minutes
-    'models_ttl'  => 3600,   // 1 hour
+'bedrock' => [
+    'cache' => [
+        'pricing_ttl'    => 86400, // 24 hours
+        'usage_ttl'      => 900,   // 15 minutes
+        'models_ttl'     => 3600,  // 1 hour
+    ],
 ],
 ```
 
+Inherited from core-ai (under `core-ai.cache.*`):
+
+```php
+'cache' => [
+    'response_ttl'   => 0,       // v2.1.0 — memoise invoke/converse when > 0
+    'embedding_ttl'  => 604800,  // v2.1.0 — 7 days; embeddings are deterministic
+],
+```
+
+| Layer | Where it lives | What it memoises |
+|---|---|---|
+| `cache.response_ttl` | `core-ai.cache` | `invoke()` / `converse()` results, keyed by `sha256(model\|system\|user\|max\|temp)`. Cached hits fire `BedrockInvoked` with `cached: true` and `latency_ms: 0`. |
+| `cache.embedding_ttl` | `core-ai.cache` | `BedrockManager::embed()` results, keyed by `sha256(model\|dimensions\|text)`. Hit returns the cached vector, zero AWS spend. |
+| `cache.models_ttl` | `core-ai.bedrock.cache` | `ListFoundationModels` results. |
+| `cache.usage_ttl` | `core-ai.bedrock.cache` | `UsageTracker` CloudWatch reads. |
+| `cache.pricing_ttl` | `core-ai.bedrock.cache` | `PricingService` AWS Pricing API reads. |
+
+Response cache is opt-in: keep `response_ttl = 0` for live chat; set it to 3600+ for deterministic templates.
+
 ---
+
+### Idempotency-Key (v2.1.0+)
+
+`BedrockClient::invoke()` and `ConverseClient::converse()` derive a deterministic `Idempotency-Key` HTTP header from `sha256(modelId|system|user)`. The header is attached on the Bearer-mode HTTP path; Bedrock uses it to deduplicate retries — a network blip returns the same cached response instead of double-billing.
+
+The header is computed inside `BedrockClient::invoke()`:
+
+```php
+$idempotencyKey = hash('sha256', $modelId.'|'.$systemPrompt.'|'.$userMessage);
+```
+
+IAM (SDK) mode does not allow custom headers on Bedrock runtime calls, so the key only flows through Bearer.
+
+To use the same hash in your app code:
+
+```php
+$key = app(BedrockManager::class)->idempotencyKey($modelId, $systemPrompt.$userMessage);
+// 'bedrock_ai-<sha256 hash>'
+```
+
+---
+
+### Cost Optimisations (v2.1.0+)
+
+A summary of every cost-saving lever in the package and the env-var that turns it on:
+
+| Lever | Env var | Default | Best case |
+|---|---|---|---|
+| Bedrock `cachePoint` | `BEDROCK_PROMPT_CACHE_POINTS=system,last_user` | empty (off) | ~77% off input rate on cached calls |
+| Bedrock cache TTL | `BEDROCK_PROMPT_CACHE_TTL` | `300` s (max `3600`) | longer TTL → more calls hit the cache |
+| Response cache | `core-ai.cache.response_ttl` | `0` (off) | 100% off repeated deterministic calls |
+| Embedding cache | `core-ai.cache.embedding_ttl` | `604800` s (7 d) | zero AWS spend on re-ingestion |
+| `Retry-After` honouring | (automatic) | — | faster recovery vs exponential backoff |
+| Idempotency-Key | (automatic in Bearer mode) | — | no double-billing on retry |
+| Max-tokens clamp | (automatic) | — | no 400s on oversized `maxTokens` |
+| Cost limits | `BEDROCK_DAILY_LIMIT` / `BEDROCK_MONTHLY_LIMIT` | `null` | `CostLimitExceededException` pre-call |
+
+See [`docs/caching-strategy.md`](docs/caching-strategy.md) for the worked example.
 
 ### Invocation Logging
 

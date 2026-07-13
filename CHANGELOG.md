@@ -6,6 +6,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and 
 
 ---
 
+## [2.1.1] - 2026-07-13
+
+### Documentation
+- README extended with a `Cost Optimisations (v2.1.0+)` section summarising all 7 cost levers (cachePoint, response cache, embedding cache, Idempotency-Key, Retry-After, multi-key failover, prompt-cache TTL).
+- Added `Retry-After honouring (v2.1.0+)` paragraph to the Retry Behaviour section.
+- Added explicit references to `core-ai.cache.response_ttl` and `core-ai.cache.embedding_ttl` (inherited) with a table of all 5 cache layers.
+- New `Idempotency-Key (v2.1.0+)` section explaining the hash contract and `idempotencyKey()` helper.
+- New `/docs/` cookbook (8 files): `getting-started.md`, `caching-strategy.md`, `multi-key-failover.md`, `embeddings.md`, `cost-and-usage.md`, `streaming.md`, `real-world-patterns.md`, `faq.md`.
+
+---
+
 ## [2.1.0] - 2026-07-13
 
 ### Added
