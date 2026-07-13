@@ -6,6 +6,32 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and 
 
 ---
 
+## [2.1.0] - 2026-07-13
+
+### Added
+- **`cachePoint` injection on Converse bodies.** `ConverseClient::doConverse()`, `ConverseClient::converseHttp()`, and `StreamingClient::converseStream()` now append `cachePoint: { type: 'default' }` blocks at the named anchors configured in `core-ai.bedrock.prompt_caching.points`:
+  - `system` — appends a checkpoint to the `system` array after the system prompt.
+  - `last_user` — appends a checkpoint to the last user message's content array.
+
+  Bedrock will then charge ~10% of the normal input rate for the cached prefix on subsequent calls within the cache TTL. BedrockManager and the three client factories (`client()`, `converseClient()`, `streamingClient()`) propagate the configured points to the client instances automatically.
+
+- **`Idempotency-Key` header on Bearer HTTP requests.** `ConverseClient::converseHttp()` accepts an `?string $idempotencyKey` and, when present, attaches it as the `Idempotency-Key` header. `BedrockClient::invoke()` generates a deterministic `sha256(modelId|system|user)` key and passes it through, so a network blip retries as the same request rather than a fresh billing event.
+
+- **`Retry-After` honouring in `HasRetryLogic`.** When the HTTP bearer path parses a 429 response, the `Retry-After` header value is captured and consumed by `withRetry()` in preference to the exponential backoff (`baseDelay^attempt`). Each retry iteration consumes one hint.
+
+- **`BedrockManager::embed($modelId, array $texts, ?int $dimensions, ?string $connection)`** — batch embedding endpoint using the Bedrock InvokeModel action (Titan Embed Text v2 / Cohere Embed). Cached per `(modelId, dimensions, sha256(text))` for `core-ai.cache.embedding_ttl` seconds (default 7 days). Closes the gap that `KentEmbeddingService` previously handled directly.
+
+- **`HasRetryLogic::setPromptCachePoints()` / `setRetryAfterSeconds()`** setters — public configuration surface for the new injection hooks. Concrete clients expose these via the manager; subclasses can override.
+
+### Changed
+- `ConverseClient::converse()` and `doConverse()` accept an optional `?string $idempotencyKey = null` last parameter. Existing 5-arg calls keep working — fully backward-compatible.
+- `BedrockClient::invoke()` now generates an Idempotency-Key and propagates it to the underlying converse call. No signature change.
+
+### Notes
+- All additions are backward-compatible. Existing v2.0.0 consumers keep working unchanged — no cachePoint is injected unless `prompt_caching.points` is non-empty, no Idempotency-Key is attached in bearer mode unless the caller provides one, and `embed()` is a new method callers opt into.
+
+---
+
 ## [2.0.0] - 2026-07-13
 
 ### BREAKING CHANGES

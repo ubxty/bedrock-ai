@@ -446,6 +446,30 @@ BEDROCK_RETRY_DELAY=2       # base delay in seconds; doubles each retry
 
 ---
 
+### Prompt Caching (v2.1.0+)
+
+AWS Bedrock supports `cachePoint` checkpoint blocks on the Converse content array. Subsequent calls with the same prefix within the cache TTL are charged ~10% of the normal input rate. Configure the named anchors where the package injects a checkpoint:
+
+```env
+BEDROCK_PROMPT_CACHE_POINTS=system,last_user   # or just one of them
+BEDROCK_PROMPT_CACHE_TTL=300                   # 5 min, max 3600
+```
+
+Or in `config/core-ai.php`:
+
+```php
+'bedrock' => [
+    'prompt_caching' => [
+        'points'     => ['system', 'last_user'],
+        'ttl_seconds' => 300,
+    ],
+],
+```
+
+Supported anchors: `system` (after the system prompt blocks) and `last_user` (after the last user message's content blocks). Empty `points` disables. Not all models support caching — the Bedrock runtime returns a 400 if a checkpoint is placed on an unsupported model.
+
+---
+
 ### Caching
 
 ```php

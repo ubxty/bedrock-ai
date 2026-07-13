@@ -39,16 +39,17 @@ class ConverseClient
         string $systemPrompt = '',
         int $maxTokens = 4096,
         float $temperature = 0.7,
+        ?string $idempotencyKey = null,
     ): array {
         try {
-            return $this->doConverse($modelId, $messages, $systemPrompt, $maxTokens, $temperature);
+            return $this->doConverse($modelId, $messages, $systemPrompt, $maxTokens, $temperature, $idempotencyKey);
         } catch (BedrockException $e) {
             // Some models (e.g. Mixtral, Mistral 7B) reject system messages.
             // Automatically fold the system prompt into the first user message and retry.
             if ($systemPrompt !== '' && str_contains($e->getMessage(), "doesn't support system")) {
                 $messages = $this->foldSystemIntoMessages($messages, $systemPrompt);
 
-                return $this->doConverse($modelId, $messages, '', $maxTokens, $temperature);
+                return $this->doConverse($modelId, $messages, '', $maxTokens, $temperature, $idempotencyKey);
             }
 
             throw $e;
@@ -64,16 +65,17 @@ class ConverseClient
         string $systemPrompt,
         int $maxTokens,
         float $temperature,
+        ?string $idempotencyKey = null,
     ): array {
         $startTime = microtime(true);
 
-        return $this->withRetry($modelId, function (string $resolvedModelId, array $key) use ($messages, $systemPrompt, $maxTokens, $temperature, $startTime) {
+        return $this->withRetry($modelId, function (string $resolvedModelId, array $key) use ($messages, $systemPrompt, $maxTokens, $temperature, $idempotencyKey, $startTime) {
             if ($this->credentials->isBearerMode()) {
                 // Bearer mode also needs inference profile prefixes (us./eu.) for
                 // models that require cross-region inference profiles.
                 return $this->converseHttp(
                     $resolvedModelId, $messages, $systemPrompt,
-                    $maxTokens, $temperature, $startTime
+                    $maxTokens, $temperature, $startTime, $idempotencyKey
                 );
             }
 
@@ -81,17 +83,22 @@ class ConverseClient
 
             $params = [
                 'modelId' => $resolvedModelId,
-                'messages' => $this->formatMessages($messages),
                 'inferenceConfig' => [
                     'maxTokens' => $maxTokens,
                     'temperature' => $temperature,
                 ],
             ];
 
-            if ($systemPrompt !== '') {
-                $params['system'] = [
-                    ['text' => $systemPrompt],
-                ];
+            $systemBlocks = $systemPrompt !== '' ? [['text' => $systemPrompt]] : [];
+            $formattedMessages = $this->formatMessages($messages);
+
+            // Inject cachePoint markers at the configured anchors (v2.1.0).
+            [$formattedMessages, $systemBlocks] = $this->applyCachePoints($formattedMessages, $systemBlocks);
+
+            $params['messages'] = $formattedMessages;
+
+            if (! empty($systemBlocks)) {
+                $params['system'] = $systemBlocks;
             }
 
             $result = $client->converse($params);
@@ -151,6 +158,7 @@ class ConverseClient
         int $maxTokens,
         float $temperature,
         float $startTime,
+        ?string $idempotencyKey = null,
     ): array {
         $key = $this->credentials->current();
         $region = $key['region'] ?? 'us-east-1';
@@ -158,28 +166,45 @@ class ConverseClient
 
         $url = "https://bedrock-runtime.{$region}.amazonaws.com/model/{$modelId}/converse";
 
+        $systemBlocks = $systemPrompt !== '' ? [['text' => $systemPrompt]] : [];
+        $formattedMessages = $this->formatMessages($messages, true);
+
+        // Inject cachePoint markers at the configured anchors (v2.1.0).
+        [$formattedMessages, $systemBlocks] = $this->applyCachePoints($formattedMessages, $systemBlocks);
+
         $body = [
-            'messages' => $this->formatMessages($messages, true),
+            'messages' => $formattedMessages,
             'inferenceConfig' => [
                 'maxTokens' => $maxTokens,
                 'temperature' => $temperature,
             ],
         ];
 
-        if ($systemPrompt !== '') {
-            $body['system'] = [['text' => $systemPrompt]];
+        if (! empty($systemBlocks)) {
+            $body['system'] = $systemBlocks;
         }
 
-        $response = Http::withHeaders([
+        $headers = [
             'Authorization' => 'Bearer ' . $bearerToken,
             'Content-Type' => 'application/json',
             'Accept' => 'application/json',
-        ])->post($url, $body);
+        ];
+
+        if ($idempotencyKey !== null && $idempotencyKey !== '') {
+            $headers['Idempotency-Key'] = $idempotencyKey;
+        }
+
+        $response = Http::withHeaders($headers)->post($url, $body);
 
         if (! $response->successful()) {
             $status = $response->status();
 
             if ($status === 429) {
+                // Honour the upstream Retry-After hint when present.
+                $retryAfter = $response->header('Retry-After');
+                if ($retryAfter !== null) {
+                    $this->setRetryAfterSeconds((int) $retryAfter);
+                }
                 throw new RateLimitException('429 Too many requests - rate limited', 429);
             }
 

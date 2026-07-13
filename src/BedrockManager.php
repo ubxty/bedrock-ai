@@ -2,12 +2,15 @@
 
 namespace Ubxty\BedrockAi;
 
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Http;
 use Ubxty\BedrockAi\Billing\CostExplorerService;
 use Ubxty\BedrockAi\Client\BedrockClient;
 use Ubxty\BedrockAi\Client\ConverseClient;
 use Ubxty\BedrockAi\Client\CredentialManager;
 use Ubxty\BedrockAi\Client\StreamingClient;
 use Ubxty\BedrockAi\Events\BedrockInvoked;
+use Ubxty\BedrockAi\Exceptions\BedrockException;
 use Ubxty\BedrockAi\Exceptions\ConfigurationException;
 use Ubxty\BedrockAi\Pricing\PricingService;
 use Ubxty\BedrockAi\Usage\UsageTracker;
@@ -66,6 +69,7 @@ class BedrockManager extends AbstractAiManager
         );
 
         $client->setModelsCacheTtl($this->config['cache']['models_ttl'] ?? 3600);
+        $client->setPromptCachePoints($this->promptCachePoints());
 
         $this->clients[$connection] = $client;
 
@@ -87,11 +91,14 @@ class BedrockManager extends AbstractAiManager
         $keys = $connectionConfig['keys'] ?? [];
         $retryConfig = $this->config['retry'] ?? [];
 
-        return new ConverseClient(
+        $client = new ConverseClient(
             new CredentialManager($keys),
             $retryConfig['max_retries'] ?? 3,
             $retryConfig['base_delay'] ?? 2
         );
+        $client->setPromptCachePoints($this->promptCachePoints());
+
+        return $client;
     }
 
     /**
@@ -109,12 +116,15 @@ class BedrockManager extends AbstractAiManager
         $keys = $connectionConfig['keys'] ?? [];
         $retryConfig = $this->config['retry'] ?? [];
 
-        return new StreamingClient(
+        $client = new StreamingClient(
             new CredentialManager($keys),
             $retryConfig['max_retries'] ?? 3,
             $retryConfig['base_delay'] ?? 2,
             $this->config['defaults']['anthropic_version'] ?? 'bedrock-2023-05-31'
         );
+        $client->setPromptCachePoints($this->promptCachePoints());
+
+        return $client;
     }
 
     // ─────────────────────────────────────────────────────────
@@ -468,5 +478,122 @@ class BedrockManager extends AbstractAiManager
     public function isBearerMode(?string $connection = null): bool
     {
         return $this->client($connection)->getCredentialManager()->isBearerMode();
+    }
+
+    // ─────────────────────────────────────────────────────────
+    //  v2.1.0 — prompt-cache config + embeddings
+    // ─────────────────────────────────────────────────────────
+
+    /**
+     * Read the configured prompt-cache checkpoint anchors
+     * (`core-ai.bedrock.prompt_caching.points`), filtered to the supported set.
+     *
+     * @return string[]
+     */
+    protected function promptCachePoints(): array
+    {
+        $configured = $this->config['prompt_caching']['points'] ?? [];
+
+        if (! is_array($configured)) {
+            return [];
+        }
+
+        return array_values(array_filter(
+            array_map('strval', $configured),
+            fn (string $p) => in_array($p, ['system', 'last_user'], true),
+        ));
+    }
+
+    /**
+     * Generate embeddings for a batch of texts using the Bedrock InvokeModel
+     * action (Titan / Cohere Embed). Cached per (modelId, dimensions, content hash)
+     * for `core-ai.cache.embedding_ttl` seconds (default 7 days).
+     *
+     * @param  string[]  $texts
+     * @param  int  $dimensions  Optional vector size. Pass `null` for the model's native output.
+     * @return array<int, float[]>
+     */
+    public function embed(
+        string $modelId,
+        array $texts,
+        ?int $dimensions = null,
+        ?string $connection = null,
+    ): array {
+        $modelId = $this->resolveAlias($modelId);
+
+        $ttl = (int) ($this->config['cache']['embedding_ttl']
+            ?? config('core-ai.cache.embedding_ttl', 604800));
+
+        $cm = new CredentialManager(
+            $this->config['connections'][$connection ?? $this->config['default'] ?? 'default']['keys'] ?? []
+        );
+
+        $isBearer = $cm->isBearerMode();
+        $region = $cm->current()['region'] ?? 'us-east-1';
+
+        $results = [];
+        $pending = [];
+
+        foreach ($texts as $i => $text) {
+            $hash = hash('sha256', $modelId.'|'.((string) $dimensions).'|'.$text);
+            $cacheKey = "bedrock_ai_embeddings_{$hash}";
+            $cached = Cache::get($cacheKey);
+            if (is_array($cached)) {
+                $results[$i] = $cached;
+            } else {
+                $pending[$i] = $text;
+            }
+        }
+
+        foreach ($pending as $i => $text) {
+            $body = ['inputText' => $text];
+            if ($dimensions !== null) {
+                $body['dimensions'] = $dimensions;
+                $body['normalize'] = true;
+            }
+
+            if ($isBearer) {
+                $token = $cm->getBearerToken();
+                $url = "https://bedrock-runtime.{$region}.amazonaws.com/model/{$modelId}/invoke";
+                $response = Http::withHeaders([
+                    'Authorization' => 'Bearer '.$token,
+                    'Content-Type' => 'application/json',
+                    'Accept' => 'application/json',
+                ])->post($url, $body);
+                if (! $response->successful()) {
+                    throw new BedrockException("Bedrock embed HTTP {$response->status()}: ".$response->body(), $response->status());
+                }
+                $vec = $response->json('embedding') ?? [];
+            } else {
+                $sdk = new \Aws\BedrockRuntime\BedrockRuntimeClient([
+                    'version' => 'latest',
+                    'region' => $region,
+                    'credentials' => [
+                        'key' => $cm->current()['aws_key'],
+                        'secret' => $cm->current()['aws_secret'],
+                    ],
+                ]);
+                $resp = $sdk->invokeModel([
+                    'modelId' => $modelId,
+                    'contentType' => 'application/json',
+                    'accept' => 'application/json',
+                    'body' => json_encode($body),
+                ]);
+                $payload = json_decode((string) $resp['body'], true) ?: [];
+                $vec = $payload['embedding'] ?? [];
+            }
+
+            if (! is_array($vec) || empty($vec)) {
+                throw new BedrockException("Bedrock embed returned no vector for text index {$i}");
+            }
+
+            $hash = hash('sha256', $modelId.'|'.((string) $dimensions).'|'.$text);
+            Cache::put("bedrock_ai_embeddings_{$hash}", $vec, $ttl);
+            $results[$i] = $vec;
+        }
+
+        ksort($results);
+
+        return array_values($results);
     }
 }

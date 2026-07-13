@@ -50,12 +50,21 @@ class BedrockClient
 
         $converseClient = new ConverseClient($this->credentials, $this->maxRetries, $this->baseDelay);
 
+        // Propagate prompt-cache anchors so the Converse API path can inject
+        // cachePoint blocks (v2.1.0).
+        $converseClient->setPromptCachePoints($this->promptCachePoints);
+
+        // Deterministic Idempotency-Key over (modelId, system, user) — content
+        // hash so a network blip retries as the same request (v2.1.0).
+        $idempotencyKey = hash('sha256', $modelId.'|'.$systemPrompt.'|'.$userMessage);
+
         $result = $converseClient->converse(
             $modelId,
             [['role' => 'user', 'content' => $userMessage]],
             $systemPrompt,
             $maxTokens,
             $temperature,
+            $idempotencyKey,
         );
 
         $cost = $this->calculateCost($result['input_tokens'], $result['output_tokens'], $pricing);

@@ -20,6 +20,45 @@ trait HasRetryLogic
     protected ?BedrockRuntimeClient $sdkClient = null;
 
     /**
+     * Named anchors where the manager wants a `cachePoint` block injected.
+     * Currently: 'system', 'last_user'.
+     *
+     * @var string[]
+     */
+    protected array $promptCachePoints = [];
+
+    /**
+     * Optional explicit Retry-After (seconds) set by the HTTP path after parsing
+     * the rate-limit response. Cleared on each retry iteration.
+     */
+    protected ?int $retryAfterSeconds = null;
+
+    /**
+     * Set the prompt-cache checkpoint anchors. Pass-through from
+     * `core-ai.bedrock.prompt_caching.points`.
+     */
+    public function setPromptCachePoints(array $points): static
+    {
+        $this->promptCachePoints = array_values(array_filter(
+            array_map('strval', $points),
+            fn (string $p) => in_array($p, ['system', 'last_user'], true),
+        ));
+
+        return $this;
+    }
+
+    /**
+     * Set the Retry-After hint parsed from an upstream HTTP 429/503 response.
+     * When set, withRetry() uses it in preference to the exponential backoff.
+     */
+    public function setRetryAfterSeconds(?int $seconds): static
+    {
+        $this->retryAfterSeconds = $seconds;
+
+        return $this;
+    }
+
+    /**
      * Execute a callable with key rotation and retry logic.
      *
      * @param string $modelId Used for exception context
@@ -47,7 +86,12 @@ trait HasRetryLogic
                     $isRateLimited = $this->isRateLimitError($errorMessage);
 
                     if ($isRateLimited && $retryAttempt < $this->maxRetries) {
-                        $waitTime = (int) pow($this->baseDelay, $retryAttempt + 1);
+                        // Honour Retry-After when set (HTTP bearer path). Otherwise
+                        // fall back to exponential backoff: baseDelay^attempt.
+                        $waitTime = $this->retryAfterSeconds !== null
+                            ? max(1, $this->retryAfterSeconds)
+                            : (int) pow($this->baseDelay, $retryAttempt + 1);
+                        $this->retryAfterSeconds = null; // consume the hint
                         sleep($waitTime);
                         $retryAttempt++;
 
@@ -190,5 +234,40 @@ trait HasRetryLogic
             ($inputTokens / 1000) * $inputPrice + ($outputTokens / 1000) * $outputPrice,
             6
         );
+    }
+
+    /**
+     * Inject `cachePoint: { type: 'default' }` blocks into the Converse body at
+     * the configured named anchors. Empty $this->promptCachePoints is a no-op.
+     *
+     * @param  array<int, array{role: string, content: array<int, mixed>}>  $messages
+     * @param  array<int, array{text?: string}>  $system
+     * @return array{0: array<int, array{role: string, content: array<int, mixed>}>, 1: array<int, array{text?: string|cachePoint?: array}>}
+     */
+    protected function applyCachePoints(array $messages, array $system): array
+    {
+        if (empty($this->promptCachePoints)) {
+            return [$messages, $system];
+        }
+
+        if (in_array('system', $this->promptCachePoints, true) && ! empty($system)) {
+            $system[] = ['cachePoint' => ['type' => 'default']];
+        }
+
+        if (in_array('last_user', $this->promptCachePoints, true) && ! empty($messages)) {
+            // Find the last message with role 'user' and append the checkpoint to its content.
+            for ($i = count($messages) - 1; $i >= 0; $i--) {
+                if (($messages[$i]['role'] ?? null) === 'user') {
+                    if (! is_array($messages[$i]['content'])) {
+                        // Plain string content: convert to a block array.
+                        $messages[$i]['content'] = [['text' => (string) $messages[$i]['content']]];
+                    }
+                    $messages[$i]['content'][] = ['cachePoint' => ['type' => 'default']];
+                    break;
+                }
+            }
+        }
+
+        return [$messages, $system];
     }
 }

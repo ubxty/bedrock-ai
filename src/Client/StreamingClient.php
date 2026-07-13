@@ -79,15 +79,22 @@ class StreamingClient
 
             $params = [
                 'modelId' => $resolvedModelId,
-                'messages' => $this->formatMessages($messages),
                 'inferenceConfig' => [
                     'maxTokens' => $maxTokens,
                     'temperature' => $temperature,
                 ],
             ];
 
-            if ($systemPrompt !== '') {
-                $params['system'] = [['text' => $systemPrompt]];
+            $systemBlocks = $systemPrompt !== '' ? [['text' => $systemPrompt]] : [];
+            $formattedMessages = $this->formatMessages($messages);
+
+            // Inject cachePoint markers at the configured anchors (v2.1.0).
+            [$formattedMessages, $systemBlocks] = $this->applyCachePoints($formattedMessages, $systemBlocks);
+
+            $params['messages'] = $formattedMessages;
+
+            if (! empty($systemBlocks)) {
+                $params['system'] = $systemBlocks;
             }
 
             $response = $client->converseStream($params);
