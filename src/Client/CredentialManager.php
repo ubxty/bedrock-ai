@@ -3,14 +3,21 @@
 namespace Ubxty\BedrockAi\Client;
 
 use Ubxty\BedrockAi\Exceptions\ConfigurationException;
+use Ubxty\CoreAi\Client\AbstractCredentialManager;
 
-class CredentialManager
+/**
+ * AWS Bedrock credential manager with multi-key rotation and bearer/IAM
+ * auth mode auto-detection (ABSK-prefixed keys are routed to bearer mode).
+ */
+class CredentialManager extends AbstractCredentialManager
 {
-    /** @var array<int, array{label: string, auth_mode: string, aws_key: string, aws_secret: string, bearer_token: string, region: string}> */
-    protected array $keys = [];
-
-    protected int $currentIndex = 0;
-
+    /**
+     * Construct from an array of credential configs. The error message
+     * wording is preserved from the pre-AbstractCredentialManager era so
+     * existing test assertions keep matching.
+     *
+     * @param  array<int, array<string, mixed>>  $keys
+     */
     public function __construct(array $keys)
     {
         if (empty($keys)) {
@@ -54,67 +61,7 @@ class CredentialManager
     }
 
     /**
-     * Get the current credential set.
-     *
-     * @return array{label: string, auth_mode: string, aws_key: string, aws_secret: string, bearer_token: string, region: string}
-     */
-    public function current(): array
-    {
-        return $this->keys[$this->currentIndex];
-    }
-
-    /**
-     * Advance to the next credential set. Returns false if no more keys.
-     */
-    public function next(): bool
-    {
-        if ($this->currentIndex + 1 >= count($this->keys)) {
-            return false;
-        }
-
-        $this->currentIndex++;
-
-        return true;
-    }
-
-    /**
-     * Reset to the first credential set.
-     */
-    public function reset(): void
-    {
-        $this->currentIndex = 0;
-    }
-
-    /**
-     * Select a specific key by index.
-     */
-    public function select(int $index): void
-    {
-        if (! isset($this->keys[$index])) {
-            throw new ConfigurationException("Key index {$index} does not exist.");
-        }
-
-        $this->currentIndex = $index;
-    }
-
-    /**
-     * Get the number of available credential sets.
-     */
-    public function count(): int
-    {
-        return count($this->keys);
-    }
-
-    /**
-     * Get the current key index.
-     */
-    public function currentIndex(): int
-    {
-        return $this->currentIndex;
-    }
-
-    /**
-     * Check if the current key uses HTTP Bearer token mode.
+     * Check if the current key uses Bearer token authentication.
      */
     public function isBearerMode(): bool
     {
@@ -130,7 +77,7 @@ class CredentialManager
     }
 
     /**
-     * Get the Bearer token for HTTP mode.
+     * Get the Bearer token for the current key.
      */
     public function getBearerToken(): string
     {
@@ -152,7 +99,8 @@ class CredentialManager
     }
 
     /**
-     * Get all keys (labels and regions only, no secrets).
+     * Get all keys with safe info only (no secrets). Adds region and
+     * auth_mode on top of the parent's index/label/configured shape.
      *
      * @return array<int, array{index: int, label: string, region: string, auth_mode: string, configured: bool}>
      */
