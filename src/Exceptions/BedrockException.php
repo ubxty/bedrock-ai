@@ -2,31 +2,14 @@
 
 namespace Ubxty\BedrockAi\Exceptions;
 
-class BedrockException extends \RuntimeException
+use Ubxty\CoreAi\Exceptions\AiException;
+
+/**
+ * Base exception for AWS Bedrock errors.
+ *
+ * @deprecated since 0.1.0 — extend Ubxty\CoreAi\Exceptions\AiException directly.
+ *             Retained for BC; existing catch blocks on BedrockException continue to match.
+ */
+class BedrockException extends AiException
 {
-    protected ?string $modelId;
-
-    protected ?string $keyLabel;
-
-    public function __construct(
-        string $message,
-        int $code = 0,
-        ?\Throwable $previous = null,
-        ?string $modelId = null,
-        ?string $keyLabel = null
-    ) {
-        parent::__construct($message, $code, $previous);
-        $this->modelId = $modelId;
-        $this->keyLabel = $keyLabel;
-    }
-
-    public function getModelId(): ?string
-    {
-        return $this->modelId;
-    }
-
-    public function getKeyLabel(): ?string
-    {
-        return $this->keyLabel;
-    }
 }

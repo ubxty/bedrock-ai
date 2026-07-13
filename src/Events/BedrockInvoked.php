@@ -2,19 +2,36 @@
 
 namespace Ubxty\BedrockAi\Events;
 
-use Illuminate\Foundation\Events\Dispatchable;
+use Ubxty\CoreAi\Events\AiInvoked;
 
-class BedrockInvoked
+/**
+ * Fired after every AWS Bedrock invocation.
+ *
+ * @deprecated since 0.1.0 — listen to Ubxty\CoreAi\Events\AiInvoked for
+ *             multi-platform code. BedrockInvoked is retained as a BC
+ *             alias so existing `Event::listen(BedrockInvoked::class, …)`
+ *             registrations keep firing.
+ */
+class BedrockInvoked extends AiInvoked
 {
-    use Dispatchable;
-
     public function __construct(
-        public readonly string $modelId,
-        public readonly int $inputTokens,
-        public readonly int $outputTokens,
-        public readonly float $cost,
-        public readonly int $latencyMs,
-        public readonly string $keyUsed,
-        public readonly ?string $connection = null,
-    ) {}
+        string $modelId,
+        int $inputTokens,
+        int $outputTokens,
+        float $cost,
+        int $latencyMs,
+        string $keyUsed,
+        ?string $connection = null,
+    ) {
+        parent::__construct(
+            modelId: $modelId,
+            inputTokens: $inputTokens,
+            outputTokens: $outputTokens,
+            cost: $cost,
+            latencyMs: $latencyMs,
+            keyUsed: $keyUsed,
+            connection: $connection,
+            platform: 'AWS Bedrock',
+        );
+    }
 }

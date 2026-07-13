@@ -2,6 +2,11 @@
 
 namespace Ubxty\BedrockAi\Exceptions;
 
+/**
+ * Raised when a configured daily or monthly spend cap is breached.
+ *
+ * @deprecated since 0.1.0 — extend Ubxty\CoreAi\Exceptions\AiException directly.
+ */
 class CostLimitExceededException extends BedrockException
 {
     protected string $limitType;
@@ -16,7 +21,7 @@ class CostLimitExceededException extends BedrockException
         $this->limit = $limit;
         $this->current = $current;
 
-        $message = ucfirst($limitType) . " cost limit (\${$limit}) exceeded. Current spend: \$" . round($current, 4);
+        $message = ucfirst($limitType).' cost limit ($'.$limit.') exceeded. Current spend: $'.round($current, 4);
         parent::__construct($message);
     }
 
