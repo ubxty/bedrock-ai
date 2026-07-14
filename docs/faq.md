@@ -109,7 +109,7 @@ A: Listen on `BedrockInvoked`, aggregate `cost` field, push to CloudWatch / Data
 A: Yes. Store keys in AWS Secrets Manager and pull via `secret()->value()` at boot. Config is loaded once at boot, so re-deploy is still needed for config changes — for hot rotation, rotate IAM access keys in AWS.
 
 **Q: Where's the `invoke()` event payload?**
-A: See [`events-and-listeners.md`](events-and-listeners.md). The event is `BedrockInvoked` (or the alias `AiInvoked`).
+A: See the [Events](../README.md#events) section of the README. The event is `Ubxty\BedrockAi\Events\BedrockInvoked` (with the canonical type `Ubxty\CoreAi\Events\AiInvoked` as an alias). The `docs/events-and-listeners.md` file lives in the companion `ubxty/core-ai` package, not here — for bedrock-specific event names and current payload fields, the README is the source of truth.
 
 ---
 

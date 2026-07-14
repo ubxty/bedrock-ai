@@ -6,6 +6,29 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and 
 
 ---
 
+## [2.1.2] - 2026-07-14
+
+### Documentation
+- README.md badge bumped from v0.0.13 to v2.1.2.
+- README.md config-path refs moved from `config/bedrock.php` to `config/core-ai.php` (file deleted in v2.0.0).
+- README.md namespace refs to TokenEstimator + ModelSpecResolver moved from `Ubxty\BedrockAi\...` to `Ubxty\CoreAi\...` (canonical class location).
+- README.md API reference corrected: `conversation(string $modelId)` (no connection arg), `getModelsGrouped(?string $connection, ?string $context)`, `stream(...)` returns `array` (not `StreamedResponse`).
+- README.md removed references to non-existent `BedrockManager::streamCallback()`, `BedrockManager::withTools()`, `BedrockClient::converseStream()`.
+- README.md kept `userWithDocuments()` / `userWithAttachments()` rows (now exist via core-ai v2.1.3 ConversationBuilder).
+- README.md removed `--sync` from `bedrock:models` examples (option doesn't exist).
+- README.md removed claims about `$event->tags`, `$event->cacheHit`, `$event->idempotencyKey` on `BedrockInvoked` / `AiInvoked` (none of those properties exist).
+- docs/cost-and-usage.md wholesale rewrite: every fictional method call (`$pricing->estimate()`, `$ce->monthly()`, `$track->lastDays()`, `$track->forModel()`, etc.) replaced with the actual public API. Fixed `use` statements to `Ubxty\BedrockAi\Usage\…`, `…\Pricing\…`, `…\Billing\…`. Removed unsupported `--model` from artisan examples.
+- docs/streaming.md wholesale rewrite: describes what `BedrockManager::stream()`, `ConversationBuilder::stream()`, `StreamingClient::converseStream()` actually do. Bearer-token streaming now throws `ConfigurationException`.
+- docs/embeddings.md: gated `Cache::getRedis()` purge snippet on `RedisStore`.
+- docs/real-world-patterns.md: removed `invoke(..., tags: ...)` examples; kept `->schema(...)` / `->history(...)` (now valid via core-ai v2.1.3); removed `$e->cacheHit` / `$e->idempotencyKey`; corrected `config('core-ai.bedrock.default_model')` → `config('core-ai.bedrock.defaults.model')`.
+- docs/faq.md L112: re-linked events question to README events section (the old link pointed at `docs/events-and-listeners.md` which only exists in core-ai).
+
+### Notes
+- composer dependency bumped: `ubxty/core-ai ^2.1` → `^2.1.3`.
+- No source/PHP changes in this release — pure doc correction roll.
+
+---
+
 ## [2.1.1] - 2026-07-13
 
 ### Documentation

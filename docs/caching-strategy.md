@@ -12,13 +12,13 @@
 | CloudWatch usage | `core-ai.bedrock.cache.usage_ttl` | 900 s | `bedrock_ai_usage_*` |
 | AWS Pricing API | `core-ai.bedrock.cache.pricing_ttl` | 86400 s | `bedrock_ai_pricing_*` |
 | Response cache (v2.1.0) | `core-ai.cache.response_ttl` | 0 (off) | `bedrock_ai_response_{sha256(...)}` |
-| Embedding cache (v2.1.0) | `core-ai.cache.embedding_ttl` | 604800 s (7 d) | `bedrock_ai_embeddings_{sha256(...)}` |
+| Embedding cache (v2.1.0) | `core-ai.bedrock.cache.embedding_ttl` (fallback `core-ai.cache.embedding_ttl`) | 604800 s (7 d) | `bedrock_ai_embeddings_{sha256(...)}` |
 | Prompt cache markers (v2.1.0) | `core-ai.bedrock.prompt_caching.points` | upstream 300 s (max 3600) | injected into Converse payload |
 
 The package does NOT cache:
 
 - The daily / monthly cost counters (`bedrock_ai_daily_cost_…`, `bedrock_ai_monthly_cost_…`) — those are the spend ledger, not a memo.
-- Streaming responses (`converseStream()` / `BedrockManager::stream()`).
+- Streaming responses (`stream()` / `converseStream()`). The response-cache layer only memoises `invoke()` / `converse()`; streamed results are returned as an assembled `array` and never written to the response cache.
 - Authentication state.
 
 ---
@@ -117,8 +117,10 @@ Cache::forget('bedrock_ai_response_' . hash('sha256', "model|sys|user|1024|0.2")
 
 ---
 
-## 3. Embedding cache (`core-ai.cache.embedding_ttl`)
+## 3. Embedding cache (`core-ai.bedrock.cache.embedding_ttl`, fallback `core-ai.cache.embedding_ttl`)
 
+The manager first looks up `core-ai.bedrock.cache.embedding_ttl`, then falls
+back to `core-ai.cache.embedding_ttl` (the latter is the universal default).
 `BedrockManager::embed()` memoise per-text vectors:
 
 ```php
@@ -129,11 +131,19 @@ The cache key is `sha256(model|dimensions|text)`. Changing any of those resets t
 
 ### When to invalidate
 
-You almost never need to. If the source text changes for one item, the new SHA differs and a new row is written. The 7-day default is the time-to-cold; you can stretch it:
+You almost never need to. If the source text changes for one item, the new SHA differs and a new row is written. The 7-day default is the time-to-cold; you can stretch it (per-platform override first, universal fallback):
 
 ```php
+// config/core-ai.php
+'bedrock' => [
+    'cache' => [
+        'embedding_ttl' => 30 * 86400, // 30 days (this key wins)
+    ],
+],
+
+// OR, if you don't want to set per-platform:
 'cache' => [
-    'embedding_ttl' => 30 * 86400, // 30 days
+    'embedding_ttl' => 30 * 86400, // 30 days (universal fallback)
 ],
 ```
 

@@ -4,7 +4,7 @@
 <img src="https://img.shields.io/badge/PHP-8.2%2B-blue" alt="PHP 8.2+">
 <img src="https://img.shields.io/badge/Laravel-11%20%7C%2012-red" alt="Laravel 11|12">
 <img src="https://img.shields.io/badge/License-MIT-green" alt="MIT License">
-<img src="https://img.shields.io/badge/Version-0.0.13-orange" alt="Version 0.0.13">
+<img src="https://img.shields.io/badge/Version-2.1.2-orange" alt="Version 2.1.2">
 </p>
 
 A Laravel package for seamless **AWS Bedrock** integration. One fluent API to invoke, converse, and stream responses from any Bedrock model — with multi-key failover, cross-region inference, vision/document analysis, cost tracking, and a full suite of CLI tools.
@@ -106,8 +106,8 @@ This package handles all of that behind a single, consistent API so you can focu
 | **Streaming** | Real-time token streaming via `converseStream` (all providers, IAM mode) |
 | **Vision** | Send images (JPEG, PNG, GIF, WebP) alongside prompts using `userWithImage()` |
 | **Document analysis** | Send PDFs, CSVs, DOCX, XLSX, HTML, TXT, MD using `userWithDocument()` |
-| **Multi-document batching** | Send multiple documents in one turn with `userWithDocuments()` |
-| **Mixed attachments** | Send images and documents together with `userWithAttachments()` |
+| **Multi-document batching** | Send multiple documents in one turn with `userWithDocuments()` (requires `ubxty/core-ai ^2.1.3`) |
+| **Mixed attachments** | Send images and documents together with `userWithAttachments()` (requires `ubxty/core-ai ^2.1.3`) |
 | **Input modality validation** | Pre-flight check that the selected model supports image/document inputs |
 | **Token estimation** | Estimate input token count and cost before making API calls; multimodal-aware |
 | **Cost limits** | Configurable daily/monthly spend caps with atomic enforcement |
@@ -118,7 +118,7 @@ This package handles all of that behind a single, consistent API so you can focu
 | **CloudWatch usage** | Token counts, invocation counts, latency from CloudWatch metrics |
 | **Real-time pricing** | Current per-token pricing from the AWS Pricing API |
 | **Health check route** | Registerable `/health/bedrock` endpoint for uptime monitoring |
-| **Config-driven model catalogue** | Define models in `config/bedrock.php` (or `BEDROCK_MODELS` env); falls back to live AWS ListFoundationModels API |
+| **Config-driven model catalogue** | Define models in `config/core-ai.php` under the `bedrock.models` key (or `BEDROCK_MODELS` env); falls back to live AWS ListFoundationModels API |
 | **7 CLI commands** | Configure, test, list models, set default models, chat, usage, and pricing |
 | **System prompt auto-folding** | Automatically retries with system prompt injected into first user message for models that reject system blocks (Mixtral, Mistral 7B) |
 
@@ -212,7 +212,8 @@ The package also falls back to the standard `AWS_ACCESS_KEY_ID` and `AWS_SECRET_
 Add multiple credential sets to a connection. When the first key hits a rate limit or error, the client automatically rotates to the next:
 
 ```php
-// config/bedrock.php
+// config/core-ai.php
+'bedrock' => [
 'connections' => [
     'default' => [
         'keys' => [
@@ -341,12 +342,13 @@ BEDROCK_MONTHLY_LIMIT=300.00
 
 The list of models surfaced by `Bedrock::getModelsGrouped()`, `bedrock:models`, and the interactive pickers (`bedrock:test`, `bedrock:default-model`) is **config-driven** since 1.1.0 — no database table, no migration step.
 
-Configure models in `config/bedrock.php` under the `models` key. Two shapes are supported (flat is recommended; Bedrock model IDs are globally unique across regions):
+Configure models in `config/core-ai.php` under the `bedrock.models` key. Two shapes are supported (flat is recommended; Bedrock model IDs are globally unique across regions):
 
 **Flat-indexed by model ID (recommended):**
 
 ```php
-// config/bedrock.php
+// config/core-ai.php
+'bedrock' => [
 'models' => [
     'anthropic.claude-3-5-sonnet-20241022-v2:0' => [
         'name'             => 'Claude 3.5 Sonnet v2',
@@ -391,7 +393,7 @@ BEDROCK_MODELS='{"anthropic.claude-3-5-sonnet-20241022-v2:0":{"provider":"Anthro
 
 **Fallback to live API** — if the `models` block is empty (the default), `Bedrock::getModelsGrouped()` falls back to a live call against the AWS Bedrock `ListFoundationModels` API, cached via Laravel cache for `cache.models_ttl` seconds (default 3600). You don't need to configure anything to get the full Bedrock catalogue.
 
-**`syncModels()` behaviour change** — since 1.1.0, `Bedrock::syncModels(?string $connection)` no longer writes to a database. It returns the count of models configured for the given connection (read from `config('bedrock.models')`). The signature and return type are unchanged for BC.
+**`syncModels()` behaviour change** — since 1.1.0, `Bedrock::syncModels(?string $connection)` no longer writes to a database. It returns the count of models configured for the given connection (read from `config('core-ai.bedrock.models')`). The signature and return type are unchanged for BC.
 
 **Available spec keys** (all optional except `model_id`, which is the array key in flat shape):
 
@@ -783,6 +785,8 @@ $result = Bedrock::conversation('claude')
 
 Each document can be a plain file path string, or an associative array with `path`, `format` (optional), and `name` (optional) keys.
 
+> **Requires `ubxty/core-ai ^2.1.3`** for the multiple-documents fluent helper.
+
 ---
 
 ### Mixed Attachments
@@ -800,6 +804,8 @@ $result = Bedrock::conversation('amazon.nova-pro-v1:0')
     )
     ->send();
 ```
+
+> **Requires `ubxty/core-ai ^2.1.3`** for mixed-attachments.
 
 ---
 
@@ -891,7 +897,7 @@ $result = Bedrock::converse(
 Estimate usage and cost before making a call to avoid surprises:
 
 ```php
-use Ubxty\BedrockAi\Support\TokenEstimator;
+use Ubxty\CoreAi\Support\TokenEstimator;
 
 // Simple token count
 $tokens = TokenEstimator::estimate($text);
@@ -1109,9 +1115,6 @@ List all available foundation models, grouped by provider.
 # All models
 php artisan bedrock:models
 
-# Sync to DB first, then list
-php artisan bedrock:models --sync
-
 # Filter by name or ID
 php artisan bedrock:models --filter=claude
 
@@ -1304,7 +1307,7 @@ Some models (Mixtral, Mistral 7B) reject a top-level `system` block and return a
 The `ModelSpecResolver` provides known context windows, max token limits, and input modalities for all supported models — without any API call:
 
 ```php
-use Ubxty\BedrockAi\Models\ModelSpecResolver;
+use Ubxty\CoreAi\Models\ModelSpecResolver;
 
 $specs = ModelSpecResolver::resolve('anthropic.claude-3-5-sonnet-20241022-v2:0');
 // ['context_window' => 200000, 'max_tokens' => 8192]
@@ -1447,10 +1450,10 @@ Bedrock::invoke('cohere.command-r-plus-v1:0', $system, $message);       // Coher
 | `invoke(string $modelId, string $system, string $user, ...)` | `array` | Single-turn model invocation |
 | `converse(string $modelId, array $messages, ...)` | `array` | Multi-turn via Converse API |
 | `converseClient(?string $connection)` | `ConverseClient` | Get a Converse API client |
-| `stream(string $modelId, ..., callable $onChunk)` | `array` | Single-turn streaming |
-| `converseStream(string $modelId, array $messages, callable $onChunk, ...)` | `array` | Multi-turn streaming |
+| `stream(string $modelId, string $systemPrompt, string $userMessage, callable $onChunk, int $maxTokens = 4096, float $temperature = 0.7, ?string $connection = null, ?array $pricing = null)` | `array` | Single-turn streaming (IAM only — see [`docs/streaming.md`](docs/streaming.md)). |
+| `converseStream(string $modelId, array $messages, callable $onChunk, string $systemPrompt = '', int $maxTokens = 4096, float $temperature = 0.7, ?string $connection = null)` | `array` | Multi-turn streaming. Inherited from `AbstractAiManager` (IAM only). |
 | `streamingClient(?string $connection)` | `StreamingClient` | Get a streaming client |
-| `conversation(?string $modelId, ?string $connection)` | `ConversationBuilder` | Start a fluent conversation |
+| `conversation(string $modelId)` | `ConversationBuilder` | Start a fluent conversation (no connection arg — use `->connection()` on the builder) |
 | `aliases()` | `ModelAliasResolver` | Get the alias resolver |
 | `resolveAlias(string $alias)` | `string` | Resolve alias to full model ID |
 | `defaultModel()` | `string` | Get configured default chat model |
@@ -1460,7 +1463,7 @@ Bedrock::invoke('cohere.command-r-plus-v1:0', $system, $message);       // Coher
 | `listModels(?string $connection)` | `array` | Raw model summaries from AWS |
 | `fetchModels(?string $connection)` | `array` | Normalised models with specs |
 | `syncModels(?string $connection)` | `int` | Count of models configured for the connection (config-only since 1.1.0; no DB write) |
-| `getModelsGrouped(?string $context)` | `array` | Models grouped by provider with filtering |
+| `getModelsGrouped(?string $connection = null, ?string $context = null)` | `array` | Models grouped by provider with filtering |
 | `pricing()` | `PricingService` | Get the pricing service |
 | `usage()` | `UsageTracker` | Get the usage tracker |
 | `isConfigured(?string $connection)` | `bool` | True if the connection has valid credentials |
@@ -1490,15 +1493,22 @@ Bedrock::invoke('cohere.command-r-plus-v1:0', $system, $message);       // Coher
 | `user(string $message)` | Add a plain text user message |
 | `userWithImage(string $prompt, string $source, string $format)` | Add user message with an image |
 | `userWithDocument(string $prompt, string $source, string $format, string $name)` | Add user message with a document |
-| `userWithDocuments(string $prompt, array $documents)` | Add user message with multiple documents |
-| `userWithAttachments(string $prompt, array $attachments)` | Add user message with mixed image/doc attachments |
+| `userWithDocuments(string $prompt, array $documents)` | Add user message with multiple documents (requires `ubxty/core-ai ^2.1.3`) |
+| `userWithAttachments(string $prompt, array $attachments)` | Add user message with mixed image/doc attachments (requires `ubxty/core-ai ^2.1.3`) |
 | `maxTokens(int $tokens)` | Set max output tokens |
 | `temperature(float $temp)` | Set temperature (0.0–1.0) |
 | `withPricing(array $pricing)` | Set pricing arrays for cost calculation |
+| `connection(string $connection)` | Switch the connection used by the builder (requires `ubxty/core-ai ^2.1.3`) |
+| `model(string $modelId)` | Override the model ID mid-conversation (requires `ubxty/core-ai ^2.1.3`) |
+| `history(array $messages)` | Append-load existing messages into the conversation (requires `ubxty/core-ai ^2.1.3`) |
+| `schema(array $jsonSchema)` | Constrain the assistant output to a JSON schema (requires `ubxty/core-ai ^2.1.3`) |
+| `image(string $source, string $prompt = '', string $format = 'auto')` | Sugar for `userWithImage(prompt, source, format)` (requires `ubxty/core-ai ^2.1.3`) |
 | `send()` | Send and return the response array |
 | `sendStream(callable $onChunk)` | Send with real-time streaming callback |
+| `stream(callable $onChunk)` | Alias of `sendStream()` (requires `ubxty/core-ai ^2.1.3`) |
 | `estimate()` | Estimate tokens and cost without sending (multimodal-aware) |
 | `getMessages()` | Return the full message history array |
+| `getSchema()` | Return the configured JSON schema or `null` (requires `ubxty/core-ai ^2.1.3`) |
 | `setMessages(array $messages)` | Replace the full message history |
 | `reset()` | Clear history (keeps system prompt and settings) |
 
@@ -1525,7 +1535,7 @@ Bedrock::invoke('cohere.command-r-plus-v1:0', $system, $message);       // Coher
 
 ## Testing
 
-The package ships with **179 tests** and **346 assertions** covering all components.
+The package ships with a comprehensive PHPUnit suite covering all components.
 
 ```bash
 cd packages/ubxty/bedrock-ai

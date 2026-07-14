@@ -39,7 +39,7 @@ public function embed(
 | `$modelId` | Bedrock model ID — `amazon.titan-embed-text-v2:0`, `cohere.embed-english-v3`, `cohere.embed-multilingual-v3`, `amazon.titan-embed-text-v1`. Aliases resolved first. |
 | `$texts` | Array of strings. Order preserved in the returned array. Empty arrays return empty array. |
 | `$dimensions` | Optional vector size. Titan v2 supports 1024 / 512 / 256. Cohere v3 returns 1024 only. `null` → model default. |
-| `$connection` | Optional named connection. Defaults to `core-ai.bedrock.default`. |
+| `$connection` | Optional named connection. Defaults to the `default` connection in `core-ai.bedrock.connections`. |
 
 Return: `array<int, float[]>` — same indices as `$texts`. Each row is the embedding for `$texts[$i]`.
 
@@ -70,13 +70,26 @@ The cache is invalidated automatically when you change `$modelId` or `$dimension
 For full invalidation (e.g. on production model retraining):
 
 ```php
+use Illuminate\Cache\RedisStore;
 use Illuminate\Support\Facades\Cache;
 
-// Drop everything prefixed with bedrock_ai_embeddings_:
-foreach (Cache::getRedis()->keys('bedrock_ai_embeddings_*') as $key) {
-    Cache::forget($key);
+$store = Cache::getStore();
+
+// Drop everything prefixed with bedrock_ai_embeddings_.
+if ($store instanceof RedisStore) {
+    foreach ($store->connection()->keys('*bedrock_ai_embeddings_*') as $key) {
+        Cache::forget($key);
+    }
+} else {
+    // For non-Redis stores, drop them one at a time (no SCAN equivalent).
+    // Or call Cache::flush() if you don't mind losing unrelated cache rows.
+    Cache::flush();
 }
 ```
+
+The `Cache::getRedis()` shortcut only exists on `RedisStore`; on file / database
+stores it will fatal. The snippet above gates on the store type and falls back
+to `Cache::flush()` for non-Redis backends.
 
 ---
 

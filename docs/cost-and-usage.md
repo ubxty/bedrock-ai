@@ -8,72 +8,91 @@
 
 | Service | Talks to | Output | Purpose |
 |---|---|---|---|
-| `PricingService` | AWS Pricing API | Model price map (per 1k input / output tokens by region) | Convert token counts → dollars. |
-| `CostExplorerService` | AWS Cost Explorer (ce API) | Aggregated cost + usage breakdowns by service, region, time period | Monthly / dashboard breakdown by Bedrock. |
+| `PricingService` | AWS Pricing API | Per-model price map | Convert token counts → dollars. |
+| `CostExplorerService` | AWS Cost Explorer (CE API) | Aggregated cost + usage breakdowns | Daily / monthly bill breakdown by Bedrock. |
 | `UsageTracker` | CloudWatch | Per-model invocation count + token totals | Real-time invocation count per model per hour / day / month. |
 
-`BedrockManager::pricing()`, `BedrockManager::usage()`, and `BedrockManager::billing()` (an alias for `CostExplorerService`) are the public entry points.
+Public entry points on `BedrockManager`: `pricing()`, `billing()`, `usage()`.
+Namespaces: `Ubxty\BedrockAi\Pricing\PricingService`,
+`Ubxty\BedrockAi\Billing\CostExplorerService`,
+`Ubxty\BedrockAi\Usage\UsageTracker`.
 
 ---
 
-## `PricingService` — turn tokens into dollars
+## `PricingService` — per-model pricing
+
+The service exposes `getPricing()`, `refreshPricing()`, and `testConnection()`.
+It does not have an `estimate()` method — cost estimation for a specific call
+is done via `BedrockManager` (cost is included in every `invoke` / `converse`
+result) or by multiplying against a known price row.
 
 ```php
-$pricing = $manager->pricing();
+use Ubxty\BedrockAi\Pricing\PricingService;
 
-$pricing->estimate(
-    'anthropic.claude-sonnet-4-20250514-v1:0',
-    inputTokens: 700,
-    outputTokens: 200,
-    region: 'us-east-1',
-);
-// [
-//     'modelId'        => 'anthropic.claude-sonnet-4-20250514-v1:0',
-//     'region'         => 'us-east-1',
-//     'input_rate'     => 0.003,   // USD per 1k input tokens
-//     'output_rate'    => 0.015,   // USD per 1k output tokens
-//     'cache_read_rate'=> 0.0003,  // USD per 1k cached input tokens
-//     'cache_write_rate'=> 0.00375,
-//     'input_cost'     => 700 * 0.003 / 1k,
-//     'output_cost'    => 200 * 0.015 / 1k,
-//     'cache_read_cost'=> 0,
-//     'total_cost'     => 0.0051,
-// ]
+$pricing = app(PricingService::class)->getPricing();
+
+foreach ($pricing as $modelId => $data) {
+    echo "{$data['model_name']}: \${$data['input_price']}/1K in, \${$data['output_price']}/1K out\n";
+}
+```
+
+Each row has the shape:
+
+```php
+[
+    'model_id'     => 'anthropic.claude-sonnet-4-20250514-v1:0',
+    'model_name'   => 'Claude Sonnet 4',
+    'provider'     => 'Anthropic',
+    'region'       => 'us-east-1',
+    'input_price'  => 0.003,   // USD per 1k input tokens
+    'output_price' => 0.015,   // USD per 1k output tokens
+    'unit'         => 'HRS',
+]
 ```
 
 ### Pricing cache
 
-Cached for 24 hours (`core-ai.bedrock.cache.pricing_ttl`, env `BEDROCK_PRICING_TTL`). Manually invalidate:
+Cached for 24 hours under the literal key `bedrock_ai_pricing` (TTL controlled
+by `core-ai.bedrock.cache.pricing_ttl`, env `BEDROCK_PRICING_TTL`). Manually
+invalidate by calling the service's own refresh method:
 
 ```php
-app(PricingService::class)->refresh(); // drop cache + reload
+app(PricingService::class)->refreshPricing();   // drop cache + reload
 ```
 
-### When it fails
+### Failure mode
 
-If the AWS Pricing API rejects the model ID (custom FM not on the public catalogue), `PricingService::estimate()` returns a fallback price derived from the model spec. The fallback is logged at warning level — check `LOG_CHANNEL=stack` logs in dev.
+If the AWS Pricing API rejects a model ID (e.g. a custom FM not on the public
+catalogue), `PricingService::testConnection()` returns `{success: false, …}`.
+For unknown model IDs the service simply omits the row from `getPricing()`. Use
+`calculateCosts($usage, $pricingMap)` on `UsageTracker` (see below) to assign a
+fallback per-token rate to those rows.
 
 ---
 
-## `CostExplorerService` — monthly bill breakdown
+## `CostExplorerService` — daily / monthly bill breakdown
+
+CE exposes daily cost series (`getDailyCosts(int $days = 30)`), monthly
+summaries (`getMonthlySummary(int $months = 3)`), per-model breakdowns
+(`getBedrockCosts(string $start, string $end, string $granularity = 'DAILY')`),
+usage-type splits (`getCostByUsageType(string $start, string $end)`), and
+forecasts (`getCostForecast(string $start, string $end, string $granularity = 'MONTHLY')`).
+There is no `monthly(string $region)` shortcut; pass dates and grain explicitly.
 
 ```php
-$ce = $manager->billing();
+use Ubxty\BedrockAi\Billing\CostExplorerService;
 
-$breakdown = $ce->monthly('us-east-1');
+$ce = app(CostExplorerService::class);
+
+// Last 30 days, daily grain
+$daily = $ce->getDailyCosts(30);
 // [
-//     'period' => '2026-06-01..2026-06-30',
-//     'unblended_cost_usd' => 1245.78,
-//     'by_model' => [
-//         'anthropic.claude-sonnet-4-20250514-v1:0' => 814.32,
-//         'amazon.nova-pro-v1:0' => 412.90,
-//         'amazon.titan-embed-text-v2:0' => 18.56,
-//     ],
-//     'by_service_linked_account' => [
-//         '111122223333' => 1245.78,
-//     ],
-//     'unblended_unit_count' => 4_582_134,
+//   ['date' => '2026-07-13', 'unblended_cost_usd' => 41.42, ...],
+//   ...
 // ]
+
+// Last 3 months, monthly summary
+$summary = $ce->getMonthlySummary(3);
 ```
 
 ### Required IAM permissions
@@ -82,7 +101,8 @@ $breakdown = $ce->monthly('us-east-1');
 {
     "Effect": "Allow",
     "Action": [
-        "ce:GetCostAndUsage"
+        "ce:GetCostAndUsage",
+        "ce:GetCostForecast"
     ],
     "Resource": "*"
 }
@@ -90,39 +110,67 @@ $breakdown = $ce->monthly('us-east-1');
 
 ### Caching
 
-`CostExplorerService` caches the raw CE response for `core-ai.bedrock.cache.cost_explorer_ttl` (default 6 hours). For dashboards, 6 hours is fine — for accounting reconciliation, drop the TTL to `3600` (1 h).
+Each call memoises the raw CE response under a `bedrock_billing_*` key with
+TTL `core-ai.bedrock.cache.billing_ttl` (default 1 hour). For dashboards,
+one hour is fine — for accounting reconciliation, drop the TTL to `3600` (also
+one hour) and rely on fresh fetches within the same TTL.
 
 ---
 
 ## `UsageTracker` — per-model invocation count
 
-```php
-$track = $manager->usage();
+The tracker returns CloudWatch `AWS/Bedrock` metrics. The real API is
+`getActiveModels()`, `getModelUsage(string $modelId, int $days = 7)`,
+`getAggregatedUsage(int $days = 30)`, `getDailyTrend(int $days = 30, ?array $aggregatedUsage = null)`,
+`calculateCosts(array $usage, array $pricingMap = [])`, and `testConnection()`.
+There is no `lastDays($n)` nor `forModel($id)` fluent helper — pass the
+arguments explicitly.
 
-// Last 7 days, all models, token totals
-$stats = $track->lastDays(7);
+```php
+use Ubxty\BedrockAi\Usage\UsageTracker;
+
+$track = app(UsageTracker::class);
+
+// Aggregated across all models in the account, last 30 days
+$usage = $track->getAggregatedUsage(30);
 // [
-//     ['model_id' => 'anthropic.claude-sonnet-4-20250514-v1:0', 'period' => '2026-07-13', 'invocations' => 18_422, 'input_tokens' => 12_440_122, 'output_tokens' => 1_834_117],
-//     ['model_id' => 'amazon.nova-pro-v1:0', 'period' => '2026-07-13', 'invocations' => 1_002, 'input_tokens' => 122_440, 'output_tokens' => 24_000],
-//     ...
+//   'anthropic.claude-sonnet-4-20250514-v1:0' => [
+//     'input_tokens' => 12_440_122, 'output_tokens' => 1_834_117,
+//     'invocations' => 18_422, 'avg_latency_ms' => 950,
+//   ],
+//   'amazon.nova-pro-v1:0' => [
+//     'input_tokens' => 122_440, 'output_tokens' => 24_000,
+//     'invocations' => 1_002, 'avg_latency_ms' => 720,
+//   ],
 // ]
 
-// Or scoped to a model
-$stats = $track->forModel('amazon.titan-embed-text-v2:0')->lastDays(30);
+// Per-model, last 7 days — returns raw CloudWatch series
+$modelUsage = $track->getModelUsage('amazon.titan-embed-text-v2:0', days: 7);
+// ['InputTokenCount' => [...], 'OutputTokenCount' => [...], 'Invocations' => [...], 'InvocationLatency' => [...]]
+
+// Day-by-day breakdown for charts (pass the aggregated result to avoid a second fetch)
+$trend = $track->getDailyTrend(30, $usage);
 ```
 
-### Source — CloudWatch GetMetricData
+### Source — CloudWatch `GetMetricData`
 
 `UsageTracker` queries:
 
 ```
 namespace = "AWS/Bedrock"
-metric_name = "Invocations" / "InputTokenCount" / "OutputTokenCount"
+metric_name = "Invocations" / "InputTokenCount" / "OutputTokenCount" / "InvocationLatency"
 period = 3600 s
 dimensions = [{ "Name": "ModelId", "Value": "<model-id>" }]
 ```
 
-The cache key is `sha256(namespace|metric_name|model_id|period_start|period_end)` with TTL `core-ai.bedrock.cache.usage_ttl` (default 15 minutes).
+Cache keys:
+
+- `getModelUsage(...)` uses a **process-local** key of `"{$modelId}_{$days}"`
+  (held on the instance; not in the Laravel cache). Repeat calls within the
+  same worker hit the in-memory map.
+- `getAggregatedUsage(int $days)` uses a **Laravel cache** key
+  `bedrock_ai_usage_{days}d_<md5(accessKey)>` (TTL `core-ai.bedrock.cache.usage_ttl`,
+  default 15 minutes).
 
 ### Required IAM permissions
 
@@ -139,40 +187,42 @@ The cache key is `sha256(namespace|metric_name|model_id|period_start|period_end)
 
 ### Caveats
 
-- **CloudWatch delay** — `AWS/Bedrock` metrics lag by 2-5 minutes. Don't use them for live quotas.
-- **Per-account aggregation** — accounts with multiple keys get merged. To track per-key, you need the SDK's `AWS/Bedrock` metric with the `KeyArn` dimension (not currently exposed).
+- **CloudWatch delay** — `AWS/Bedrock` metrics lag by 2-5 minutes. Don't use
+  them for live quotas; use `BedrockInvoked` events for that.
+- **Per-account aggregation** — accounts with multiple keys get merged at the
+  CloudWatch level. There is no per-key dimension exposure here.
 
 ---
 
-## Putting it together — admin dashboard
-
-A minimal dashboard with all three:
+## Cost attribution — putting it together
 
 ```php
-use Ubxty\BedrockAi\Facades\Bedrock;
-use Ubxty\BedrockAi\Services\{UsageTracker, PricingService, CostExplorerService};
+use Ubxty\BedrockAi\BedrockManager;
 
 class BedrockAdminController
 {
+    public function __construct(private BedrockManager $bedrock) {}
+
     public function dashboard(): array
     {
-        /** @var BedrockManager $m */
-        $m = app(BedrockManager::class);
+        $usage = $this->bedrock->usage()->getAggregatedUsage(7);
+        $pricing = $this->bedrock->pricing()->getPricing();
+        $ce = $this->bedrock->billing()->getDailyCosts(30);
 
-        $usage = $m->usage()->lastDays(7);
-        $ce    = $m->billing()->monthly('us-east-1');
+        $costs = $this->bedrock->usage()->calculateCosts($usage, $pricing);
+        // ['total_cost' => 12.34, 'by_model' => [...]]
 
-        $totalTokens = array_sum(array_column($usage, 'input_tokens')) + array_sum(array_column($usage, 'output_tokens'));
+        $monthly = array_sum(array_column($ce, 'unblended_cost_usd'));
 
         return [
             'window' => 'last 7 days',
             'invocations' => array_sum(array_column($usage, 'invocations')),
-            'tokens' => $totalTokens,
-            'monthly_total_usd' => $ce['unblended_cost_usd'],
+            'tokens' => array_sum(array_column($usage, 'input_tokens'))
+                      + array_sum(array_column($usage, 'output_tokens')),
+            'estimated_cost_usd' => $costs['total_cost'],
+            'ce_window_total_usd' => $monthly,
             'top_model' => collect($usage)
-                ->groupBy('model_id')
-                ->map(fn ($g) => array_sum(array_column($g, 'output_tokens')))
-                ->sortDesc()
+                ->sortByDesc(fn ($d) => $d['output_tokens'])
                 ->keys()
                 ->first(),
         ];
@@ -180,18 +230,26 @@ class BedrockAdminController
 }
 ```
 
-Combined with the `BedrockInvoked` event for in-process counters, you get an end-to-end live + reconciled dashboard.
+Combined with the `BedrockInvoked` event for in-process, per-invocation cost,
+this gives a live + reconciled dashboard.
 
 ---
 
 ## CLI commands
 
 ```bash
-php artisan bedrock:pricing                                  # list all models and rates
-php artisan bedrock:pricing --model=anthropic.claude-sonnet-4-20250514-v1:0
-php artisan bedrock:usage --days=30                         # per-model invocations
-php artisan bedrock:usage --model=amazon.nova-pro-v1:0 --days=7
+php artisan bedrock:pricing                                # list all models and rates
+php artisan bedrock:pricing --filter=claude                # filter by model
+php artisan bedrock:pricing --refresh                      # force fresh fetch
+php artisan bedrock:usage                                  # aggregated, last 30 days
+php artisan bedrock:usage --days=7                        # custom window
+php artisan bedrock:usage --daily                          # day-by-day breakdown
+php artisan bedrock:usage --json                           # machine-readable
 ```
+
+The `bedrock:pricing` and `bedrock:usage` commands do not accept `--model=`;
+filter at the CLI with `--filter=` (pricing) or pass a single model ID via the
+service in PHP (usage tracking).
 
 Both commands respect the cache TTLs.
 
@@ -199,23 +257,42 @@ Both commands respect the cache TTLs.
 
 ## Numbers tip
 
-The CloudWatch `AWS/Bedrock` `Invocations` count is per-call (1 per `invoke()`), not per HTTP chunk. Streaming responses count as 1 invocation. Batch `embed()` counts N invocations (one per text).
+The CloudWatch `AWS/Bedrock` `Invocations` count is per-call (1 per `invoke()`),
+not per HTTP chunk. Streaming responses count as **1 invocation**, not N. Batch
+`embed()` counts **N invocations** (one per text).
 
 For accurate cost attribution, combine:
 
-- `UsageTracker::forModel()->lastDays(30)` → invocation count.
-- `BedrockInvoked` event listener (in-process, second-precision) → idempotency-key-traced cost.
+- `UsageTracker::getAggregatedUsage($days)` → invocation count + token totals.
+- `PricingService::getPricing()` → per-1k-token rates.
+- `UsageTracker::calculateCosts($usage, $pricingMap)` → reconciled dollar
+  estimate.
+- `BedrockInvoked` event listener (in-process, second-precision) → per-call
+  cost, idempotency-key-traced.
 
 ---
 
 ## Pricing for unsupported models
 
-If you deploy a Custom Model on Bedrock (your own fine-tune), `PricingService` falls back to the underlying base model's rate (the Bedrock API treats your FM as a derivative of a base). `pricing()` will warn-log the fallback. To pin the rate explicitly:
+If you deploy a Custom Model on Bedrock (your own fine-tune), `PricingService`
+omits it from `getPricing()` (the AWS Pricing API only publishes the catalogue).
+`calculateCosts()` on `UsageTracker` will return `$0` for those rows because the
+pricing map is empty.
+
+To pin the rate explicitly, pass a `pricing` map to `calculateCosts()` — or pass
+a `pricing: [...]` array to the per-call `invoke(...)` arguments:
 
 ```php
-config(['core-ai.bedrock.model_price_overrides' => [
-    'myorg.custom-summariser-v1' => ['input' => 0.0002, 'output' => 0.001],
-]]);
+$result = Bedrock::invoke(
+    modelId: 'myorg.custom-summariser-v1',
+    systemPrompt: '…',
+    userMessage:  '…',
+    pricing: [
+        'input_price_per_1k'  => 0.0002,
+        'output_price_per_1k' => 0.001,
+    ],
+);
 ```
 
-The override is read first, then live Pricing API, then fallback.
+The per-call `pricing:` argument is honored by `calculateCost()` on the manager
+override, so the returned `cost` field reflects your override.

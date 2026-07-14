@@ -24,7 +24,7 @@ The minimal IAM policy is in the README's [Getting AWS Credentials](../README.md
 composer require ubxty/bedrock-ai
 ```
 
-This pulls in `ubxty/core-ai ^2.1` as a transitive dependency — you don't need to require it separately.
+This pulls in `ubxty/core-ai ^2.1.3` as a transitive dependency — you don't need to require it separately.
 
 The service provider is auto-discovered.
 

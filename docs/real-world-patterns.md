@@ -19,17 +19,19 @@ class TenantBedrockAdapter
     public function invoke(string $system, string $user): array
     {
         return $this->bedrock->invoke(
-            modelId: config('core-ai.bedrock.default_model'),
+            modelId: config('core-ai.bedrock.defaults.model'),
             systemPrompt: $system,
             userMessage: $user,
-            // pass tenant id via tags for downstream CloudWatch dashboards
-            tags: ['tenant_id' => $this->tenantId],
         );
     }
 }
 ```
 
-`tags[]` is forwarded into the AWS SDK's `inferenceConfig` / `additionalModelRequestFields` and surfaces in `AWS/Bedrock` CloudWatch metrics dimension `RequestTag_<tag-name>`.
+The `$tenantId` is held by the wrapper class so it can be passed to downstream
+listeners (e.g. an event listener that reads `auth()->user()->tenant_id` or
+your own tenant resolver). The Bedrock SDK does not surface `tenant_id` into
+CloudWatch dimensions by itself — fan out via your application listener on the
+`BedrockInvoked` event and write a per-tenant aggregator cache of your own.
 
 ---
 
@@ -38,10 +40,8 @@ class TenantBedrockAdapter
 Hard cap a tenant's monthly spend:
 
 ```php
-Event::listen(BedrockInvoked::class, function ($e) {
-    $tenant = $e->tags['tenant_id'] ?? null;
-    if (!$tenant) return;
-
+Event::listen(BedrockInvoked::class, function (BedrockInvoked $e) {
+    $tenant = auth()->user()?->tenant_id ?? 'default';
     $cost = $e->cost;
     $monthly = Cache::increment("tenant.{$tenant}.monthly_spend", $cost);
 
@@ -51,20 +51,20 @@ Event::listen(BedrockInvoked::class, function ($e) {
 });
 ```
 
-The exception is caught by the framework's exception handler — return `429: Over monthly cap` to the caller.
+The exception is caught by the framework's exception handler — return `429: Over monthly cap` to the caller. (The `BedrockInvoked` event carries `modelId`, `inputTokens`, `outputTokens`, `cost`, `latencyMs`, and `keyUsed` — no per-call tenant tag is attached, so resolve tenant context from the auth/user inside the listener.)
 
 ---
 
 ## 3. Multi-turn + multimodal
 
-Symptom mining pipeline (inspired by rubrisense's homeopathy RAG):
+Symptom mining pipeline:
 
 ```php
 $result = Bedrock::conversation('amazon.nova-pro-v1:0')
     ->system('You extract symptom vectors from clinical case notes. Output JSON.')
     ->userWithDocument('Read this case.', '/tmp/case-123.pdf')
     ->user('Output: { "symptoms": [{ "code": "S-101", "severity": 3 }] }')
-    ->schema([
+    ->schema([                                   // requires ubxty/core-ai ^2.1.3
         'type' => 'object',
         'properties' => [
             'symptoms' => ['type' => 'array', 'items' => ['type' => 'object']],
@@ -94,7 +94,7 @@ class ExtractCaseJob
         $key = $this->job->payload()['idempotency_key'] ?? null;
 
         $result = Bedrock::invoke(
-            config('core-ai.bedrock.default_model'),
+            config('core-ai.bedrock.defaults.model'),
             '…',
             file_get_contents(storage_path("cases/{$this->caseId}.txt")),
             temperature: 0.0,
@@ -165,7 +165,7 @@ foreach ($pages as $i => $page) {
 }
 
 $aggregated = Bedrock::invoke(  // now use the bigger model
-    config('core-ai.bedrock.default_model'),
+    config('core-ai.bedrock.defaults.model'),
     'You compile multiple page summaries into one structured record.',
     json_encode(['summaries' => $summaries]),
     maxTokens: 8192,
@@ -186,7 +186,7 @@ $session = AiSession::find($sid);
 return Bedrock::conversation('anthropic.claude-sonnet-4-20250514-v1:0')
     ->system($session->systemPrompt)
     ->user('')  // dummy
-    ->history($session->messages)  // ConversationBuilder::history()
+    ->history($session->messages)  // ConversationBuilder::history() — append-mode (requires ubxty/core-ai ^2.1.3)
     ->user($request->userMessage)
     ->stream();
 ```
@@ -238,20 +238,23 @@ Per-text SHA256 caching means re-running a batch (e.g. on a job failure) is free
 A simple structured-log audit trail:
 
 ```php
-Event::listen(BedrockInvoked::class, function ($e) {
+Event::listen(BedrockInvoked::class, function (BedrockInvoked $e) {
     Log::channel('audit')->info('ai.invoke', [
-        'model'       => $e->modelId,
-        'tenant'      => $e->tags['tenant_id'] ?? null,
-        'cost'        => $e->cost,
-        'tokens_in'   => $e->inputTokens,
-        'tokens_out'  => $e->outputTokens,
-        'key_used'    => $e->keyUsed,
-        'latency_ms'  => $e->latencyMs,
-        'cache_hit'   => $e->cacheHit,
-        'idempotency' => $e->idempotencyKey,
+        'model'      => $e->modelId,
+        'cost'       => $e->cost,
+        'tokens_in'  => $e->inputTokens,
+        'tokens_out' => $e->outputTokens,
+        'key_used'   => $e->keyUsed,
+        'latency_ms' => $e->latencyMs,
     ]);
 });
 ```
+
+The `BedrockInvoked` event exposes `modelId`, `inputTokens`, `outputTokens`,
+`cost`, `latencyMs`, `keyUsed` — there is no per-event `cacheHit`,
+`idempotencyKey`, or `tags` property. For per-call tenant attribution, resolve
+`auth()->user()->tenant_id` (or your tenant resolver) inside the listener and
+write to your own aggregator.
 
 Pipe `LOG_CHANNEL_AI=audit` to your compliance log store.
 
@@ -274,10 +277,12 @@ If the same job runs twice, the underlying Bedrock call returns the same cached 
 ## 12. Rate-limit-aware queue throttling
 
 ```php
-Event::listen(BedrockRateLimited::class, function ($e) {
-    $secs = $e->retryAfterSeconds ?? 30;
+Event::listen(BedrockRateLimited::class, function (BedrockRateLimited $e) {
+    // BedrockRateLimited exposes modelId, keyLabel, retryAttempt, waitSeconds.
+    // waitSeconds is the upstream Retry-After hint (seconds), or 0 if not present.
+    $secs = $e->waitSeconds ?: 30;
     Cache::put('ai.rate_limited_until', now()->addSeconds($secs));
-    Log::warning('rate limited', ['for' => $secs]);
+    Log::warning('rate limited', ['for' => $secs, 'model' => $e->modelId, 'key' => $e->keyLabel]);
 });
 ```
 
