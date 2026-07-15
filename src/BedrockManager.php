@@ -133,6 +133,32 @@ class BedrockManager extends AbstractAiManager
         return $client;
     }
 
+    /**
+     * Build a one-off ConverseClient with the package's cachePoint config
+     * overridden for a single call. Used by `performConverse()` when a
+     * ConversationBuilder has set a per-session cache-points override.
+     */
+    protected function converseClientWithCacheOverride(?string $connection, array $cachePointsOverride): ConverseClient
+    {
+        $client = $this->converseClient($connection);
+        $client->setPromptCachePoints($cachePointsOverride);
+
+        return $client;
+    }
+
+    /**
+     * Build a one-off StreamingClient with the package's cachePoint config
+     * overridden for a single call. Used by `performConverseStream()` when
+     * a ConversationBuilder has set a per-session cache-points override.
+     */
+    protected function streamingClientWithCacheOverride(?string $connection, array $cachePointsOverride): StreamingClient
+    {
+        $client = $this->streamingClient($connection);
+        $client->setPromptCachePoints($cachePointsOverride);
+
+        return $client;
+    }
+
     // ─────────────────────────────────────────────────────────
     //  bedrock-only public stream() — raw streaming with chat-style
     //  message order. Distinct from parent's converseStream() which
@@ -205,9 +231,49 @@ class BedrockManager extends AbstractAiManager
         string $systemPrompt,
         int $maxTokens,
         float $temperature,
-        ?string $connection
+        ?string $connection,
+        ?array $cachePointsOverride = null
     ): array {
-        return $this->converseClient($connection)->converse($modelId, $messages, $systemPrompt, $maxTokens, $temperature);
+        $client = $cachePointsOverride !== null
+            ? $this->converseClientWithCacheOverride($connection, $cachePointsOverride)
+            : $this->converseClient($connection);
+
+        return $client->converse($modelId, $messages, $systemPrompt, $maxTokens, $temperature);
+    }
+
+    /**
+     * Whether the resolved model_id is in the cache-capable allowlist, so
+     * cachePoint markers would actually be injected for it. Mirrors the
+     * gating inside {@see HasRetryLogic::applyCachePoints()}. Public so
+     * interactive commands (`bedrock:chat`, `bedrock:models`, …) can
+     * annotate the model picker.
+     */
+    public function modelSupportsCaching(string $modelId): bool
+    {
+        return $this->converseClient()->modelSupportsCaching($modelId);
+    }
+
+    /**
+     * Whether the package config has at least one cachePoint anchor
+     * configured (`core-ai.bedrock.prompt_caching.points` non-empty).
+     * Used by the chat command to decide whether to ask the user about
+     * cached vs standard mode.
+     */
+    public function packageCachePointsConfigured(): bool
+    {
+        return ! empty($this->promptCachePoints());
+    }
+
+    /**
+     * Return the configured cachePoint anchors verbatim. Used by the chat
+     * command to force-enable caching when the user picks cached mode and
+     * the package config has anchors.
+     *
+     * @return string[]
+     */
+    public function configuredCachePoints(): array
+    {
+        return $this->promptCachePoints();
     }
 
     /**
@@ -223,9 +289,14 @@ class BedrockManager extends AbstractAiManager
         string $systemPrompt,
         int $maxTokens,
         float $temperature,
-        ?string $connection
+        ?string $connection,
+        ?array $cachePointsOverride = null
     ): array {
-        return $this->streamingClient($connection)->converseStream($modelId, $messages, $onChunk, $systemPrompt, $maxTokens, $temperature);
+        $client = $cachePointsOverride !== null
+            ? $this->streamingClientWithCacheOverride($connection, $cachePointsOverride)
+            : $this->streamingClient($connection);
+
+        return $client->converseStream($modelId, $messages, $onChunk, $systemPrompt, $maxTokens, $temperature);
     }
 
     // ─────────────────────────────────────────────────────────

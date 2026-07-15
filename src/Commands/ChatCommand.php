@@ -25,6 +25,9 @@ class ChatCommand extends Command
 
     protected int $messageCount = 0;
 
+    /** Per-session cache-mode choice. null = honour package config. */
+    protected ?bool $cachingEnabled = null;
+
     public function handle(BedrockManager $manager): int
     {
         $connection = $this->option('connection');
@@ -64,6 +67,14 @@ class ChatCommand extends Command
         $temperature = (float) $this->option('temperature');
         $useStreaming = ! $this->option('no-stream');
 
+        // Cache-mode prompt: only when the package config has anchors AND the
+        // selected model actually supports cachePoint markers. Otherwise the
+        // question is moot (nothing to enable) or pointless (the request would
+        // 403).
+        if ($manager->packageCachePointsConfigured() && $manager->modelSupportsCaching($modelId)) {
+            $this->cachingEnabled = $this->confirm('  Use cached mode for this session?', true);
+        }
+
         $this->printHeader($modelId, $systemPrompt, $useStreaming);
 
         $conversation = $manager->conversation($modelId)
@@ -74,6 +85,8 @@ class ChatCommand extends Command
         if ($connection) {
             $conversation->connection($connection);
         }
+
+        $this->applyCachePointsOverride($conversation);
 
         // Main chat loop
         while (true) {
@@ -133,8 +146,25 @@ class ChatCommand extends Command
                     $conversation->connection($connection);
                 }
 
+                $this->applyCachePointsOverride($conversation);
+
                 $modelId = $newModel;
                 $this->info("  Switched to model: {$newModel}");
+
+                continue;
+            }
+
+            if (preg_match('#^/cache(\s+(on|off))?\s*$#i', $command, $m)) {
+                $arg = strtolower($m[2] ?? '');
+                if ($arg === 'on') {
+                    $this->cachingEnabled = true;
+                } elseif ($arg === 'off') {
+                    $this->cachingEnabled = false;
+                } else {
+                    $this->cachingEnabled = ! $this->cachingEnabled;
+                }
+                $this->applyCachePointsOverride($conversation);
+                $this->info('  Caching: '.($this->cachingEnabled ? '<fg=green>On</>' : '<fg=yellow>Off</>'));
 
                 continue;
             }
@@ -253,8 +283,11 @@ class ChatCommand extends Command
             $num = $i + 1;
             $name = $model['name'] ?: $model['model_id'];
             $ctx = number_format($model['context_window']);
-            $this->line(sprintf('  <fg=yellow>%3d</> │ %s <fg=gray>(%s ctx)</>',
-                $num, $name, $ctx
+            $badge = $manager->modelSupportsCaching($model['model_id'])
+                ? ' <fg=magenta>[cached]</>'
+                : '';
+            $this->line(sprintf('  <fg=yellow>%3d</> │ %s <fg=gray>(%s ctx)</>%s',
+                $num, $name, $ctx, $badge
             ));
             $choices[$num] = $model['model_id'];
         }
@@ -382,10 +415,47 @@ class ChatCommand extends Command
         $this->line("  Model:     <fg=cyan>{$modelId}</>");
         $this->line("  System:    <fg=gray>" . substr($systemPrompt, 0, 60) . (strlen($systemPrompt) > 60 ? '...' : '') . '</>');
         $this->line('  Streaming: ' . ($streaming ? '<fg=green>On</>' : '<fg=yellow>Off</>'));
+        $this->line('  Caching:   ' . $this->cachingHeader());
         $this->line('');
         $this->line('  Type your message and press Enter. Commands:');
         $this->line('  <fg=yellow>/help</> - Show all commands  <fg=yellow>/quit</> - Exit session');
         $this->line('  ─────────────────────────────────────────────');
+    }
+
+    /**
+     * Render the Caching: row in the chat header. Three states:
+     *   - null  → <fg=gray>Default (package config)</>
+     *   - true  → <fg=green>On</>
+     *   - false → <fg=yellow>Off</>
+     */
+    protected function cachingHeader(): string
+    {
+        return match ($this->cachingEnabled) {
+            true  => '<fg=green>On</>',
+            false => '<fg=yellow>Off</>',
+            default => '<fg=gray>Default (package config)</>',
+        };
+    }
+
+    /**
+     * Apply the current cache-mode choice to a fresh conversation builder.
+     * Called on initial model selection, after `/model` switches, and after
+     * `/cache on|off` toggles.
+     */
+    protected function applyCachePointsOverride($conversation): void
+    {
+        if ($this->cachingEnabled === null) {
+            return;
+        }
+
+        $conversation->cachePoints(
+            $this->cachingEnabled ? $this->manager()->configuredCachePoints() : []
+        );
+    }
+
+    protected function manager(): BedrockManager
+    {
+        return app(BedrockManager::class);
     }
 
     protected function printHelp(): void
@@ -400,6 +470,7 @@ class ChatCommand extends Command
         $this->line('  <fg=yellow>/system <text></>  Change the system prompt');
         $this->line('  <fg=yellow>/model <id></>     Switch to a different model');
         $this->line('  <fg=yellow>/temp <0-1></>     Change temperature');
+        $this->line('  <fg=yellow>/cache on|off</>  Toggle prompt caching for this session');
         $this->line('  <fg=yellow>/image <path> [prompt]</>');
         $this->line('                    Analyse an image (jpg/png/gif/webp)');
         $this->line('  <fg=yellow>/doc <path> [prompt]</>');

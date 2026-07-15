@@ -279,4 +279,15 @@ class ConverseClient
             ));
         }
     }
+
+    /**
+     * Public wrapper for the trait's `supportsCaching()` so callers outside
+     * the trait (e.g. {@see BedrockManager::modelSupportsCaching()}) can ask
+     * whether a model would receive cachePoint markers under the current
+     * allowlist config without firing a request.
+     */
+    public function modelSupportsCaching(string $modelId): bool
+    {
+        return $this->supportsCaching($modelId);
+    }
 }
