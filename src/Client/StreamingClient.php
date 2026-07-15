@@ -102,6 +102,8 @@ class StreamingClient
             $fullResponse = '';
             $inputTokens = 0;
             $outputTokens = 0;
+            $cacheReadInputTokens = 0;
+            $cacheWriteInputTokens = 0;
 
             foreach ($response['stream'] as $event) {
                 if (isset($event['contentBlockDelta'])) {
@@ -113,14 +115,24 @@ class StreamingClient
                 if (isset($event['metadata']['usage'])) {
                     $inputTokens = $event['metadata']['usage']['inputTokens'] ?? 0;
                     $outputTokens = $event['metadata']['usage']['outputTokens'] ?? 0;
+                    $cacheReadInputTokens = $event['metadata']['usage']['cacheReadInputTokens'] ?? 0;
+                    $cacheWriteInputTokens = $event['metadata']['usage']['cacheWriteInputTokens'] ?? 0;
                 }
             }
 
+            $effectiveInput = $this->effectiveInputTokens(
+                (int) $inputTokens,
+                (int) $cacheReadInputTokens,
+                (int) $cacheWriteInputTokens,
+            );
+
             return [
                 'response' => $fullResponse,
-                'input_tokens' => $inputTokens,
+                'input_tokens' => $effectiveInput,
                 'output_tokens' => $outputTokens,
-                'total_tokens' => $inputTokens + $outputTokens,
+                'total_tokens' => $effectiveInput + $outputTokens,
+                'cache_read_input_tokens' => $cacheReadInputTokens,
+                'cache_write_input_tokens' => $cacheWriteInputTokens,
                 'latency_ms' => (int) ((microtime(true) - $startTime) * 1000),
                 'model_id' => $resolvedModelId,
                 'key_used' => $key['label'] ?? 'Primary',

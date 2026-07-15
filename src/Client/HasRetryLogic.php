@@ -302,6 +302,25 @@ trait HasRetryLogic
     }
 
     /**
+     * Resolve the effective input-token count from a Converse `usage` block.
+     *
+     * Amazon Nova (Pro/Lite/Micro) reports `inputTokens=0` for cached
+     * requests and surfaces the real count via `cacheReadInputTokens +
+     * cacheWriteInputTokens`. Anthropic Claude reports the total via
+     * `inputTokens` and the cache fields as subsets, so summing them all
+     * would double-count. We pick whichever reading is non-zero so both
+     * model families surface the correct effective input to callers.
+     */
+    protected function effectiveInputTokens(int $inputTokens, int $cacheReadInputTokens, int $cacheWriteInputTokens): int
+    {
+        if ($inputTokens > 0) {
+            return $inputTokens;
+        }
+
+        return $cacheReadInputTokens + $cacheWriteInputTokens;
+    }
+
+    /**
      * Inject `cachePoint` blocks into the Converse body at the configured named
      * anchors. Empty $this->promptCachePoints is a no-op.
      *

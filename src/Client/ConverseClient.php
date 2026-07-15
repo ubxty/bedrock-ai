@@ -106,13 +106,23 @@ class ConverseClient
             $outputText = $result['output']['message']['content'][0]['text'] ?? '';
             $inputTokens = $result['usage']['inputTokens'] ?? 0;
             $outputTokens = $result['usage']['outputTokens'] ?? 0;
+            $cacheReadInputTokens = $result['usage']['cacheReadInputTokens'] ?? 0;
+            $cacheWriteInputTokens = $result['usage']['cacheWriteInputTokens'] ?? 0;
             $stopReason = $result['stopReason'] ?? 'end_turn';
+
+            $effectiveInput = $this->effectiveInputTokens(
+                (int) $inputTokens,
+                (int) $cacheReadInputTokens,
+                (int) $cacheWriteInputTokens,
+            );
 
             return [
                 'response' => $outputText,
-                'input_tokens' => $inputTokens,
+                'input_tokens' => $effectiveInput,
                 'output_tokens' => $outputTokens,
-                'total_tokens' => $inputTokens + $outputTokens,
+                'total_tokens' => $effectiveInput + $outputTokens,
+                'cache_read_input_tokens' => $cacheReadInputTokens,
+                'cache_write_input_tokens' => $cacheWriteInputTokens,
                 'stop_reason' => $stopReason,
                 'latency_ms' => (int) ((microtime(true) - $startTime) * 1000),
                 'model_id' => $resolvedModelId,
@@ -215,13 +225,23 @@ class ConverseClient
         $outputText = $data['output']['message']['content'][0]['text'] ?? '';
         $inputTokens = $data['usage']['inputTokens'] ?? 0;
         $outputTokens = $data['usage']['outputTokens'] ?? 0;
+        $cacheReadInputTokens = $data['usage']['cacheReadInputTokens'] ?? 0;
+        $cacheWriteInputTokens = $data['usage']['cacheWriteInputTokens'] ?? 0;
         $stopReason = $data['stopReason'] ?? 'end_turn';
+
+        $effectiveInput = $this->effectiveInputTokens(
+            (int) $inputTokens,
+            (int) $cacheReadInputTokens,
+            (int) $cacheWriteInputTokens,
+        );
 
         return [
             'response' => $outputText,
-            'input_tokens' => $inputTokens,
+            'input_tokens' => $effectiveInput,
             'output_tokens' => $outputTokens,
-            'total_tokens' => $inputTokens + $outputTokens,
+            'total_tokens' => $effectiveInput + $outputTokens,
+            'cache_read_input_tokens' => $cacheReadInputTokens,
+            'cache_write_input_tokens' => $cacheWriteInputTokens,
             'stop_reason' => $stopReason,
             'latency_ms' => (int) ((microtime(true) - $startTime) * 1000),
             'model_id' => $modelId,
