@@ -47,6 +47,21 @@ trait HasRetryLogic
     protected const MAX_CACHE_POINTS = 4;
 
     /**
+     * Glob patterns of model_ids that support prompt caching.
+     * Empty = "all models" (preserves pre-v2.1.4 behaviour, where cachePoint
+     * was emitted for every model the user pointed at). Populated = the
+     * package only emits cachePoint markers when the resolved model_id
+     * matches at least one pattern. The match is performed with the
+     * cross-region inference profile prefix (us.|eu.|apac.|ca.) stripped so
+     * `us.anthropic.claude-3-5-sonnet-…` still matches `anthropic.claude*`.
+     *
+     * Backed by `core-ai.bedrock.prompt_caching.supported_models`.
+     *
+     * @var string[]
+     */
+    protected array $cacheSupportedModels = [];
+
+    /**
      * Optional explicit Retry-After (seconds) set by the HTTP path after parsing
      * the rate-limit response. Cleared on each retry iteration.
      */
@@ -80,6 +95,53 @@ trait HasRetryLogic
         $this->promptCachePointType = in_array($type, $allowed, true) ? $type : 'default';
 
         return $this;
+    }
+
+    /**
+     * Restrict cachePoint injection to model_ids matching at least one of
+     * these glob patterns (e.g. `anthropic.claude*`, `amazon.nova*`).
+     * Pass `['*']` to opt every model back in. Pass `[]` to disable caching
+     * for every model. Pass-through from
+     * `core-ai.bedrock.prompt_caching.supported_models`.
+     *
+     * Empty strings are silently dropped so a stray `,,` in env config
+     * can't open a model up to caching by accident.
+     */
+    public function setPromptCacheSupportedModels(array $patterns): static
+    {
+        $this->cacheSupportedModels = array_values(array_filter(
+            array_map('strval', $patterns),
+            static fn (string $p) => $p !== '',
+        ));
+
+        return $this;
+    }
+
+    /**
+     * Decide whether cachePoint markers should be emitted for the given
+     * resolved model_id. Returns true when no allowlist is configured
+     * (preserves legacy "apply caching everywhere" behaviour) and false
+     * when the model_id doesn't match any configured pattern.
+     *
+     * Cross-region inference profile prefixes (`us.`, `eu.`, `apac.`, `ca.`)
+     * are stripped before matching so the same pattern covers prefixed and
+     * unprefixed variants.
+     */
+    protected function supportsCaching(string $modelId): bool
+    {
+        if (empty($this->cacheSupportedModels)) {
+            return true;
+        }
+
+        $normalized = preg_replace('/^(?:us|eu|apac|ca)\./', '', $modelId) ?? $modelId;
+
+        foreach ($this->cacheSupportedModels as $pattern) {
+            if (fnmatch($pattern, $normalized)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -333,13 +395,22 @@ trait HasRetryLogic
      * When the ceiling is hit, earlier anchors win (system > last_user >
      * last_assistant > every_n_assistant).
      *
+     * When $modelId is non-empty and doesn't match the configured
+     * `cacheSupportedModels` allowlist, this is also a no-op — the model
+     * family rejects cachePoint markers with a 400/403, so we skip them.
+     *
      * @param  array<int, array{role: string, content: array<int, mixed>}>  $messages
      * @param  array<int, array{text?: string}>  $system
+     * @param  string  $modelId  Resolved model_id (with cross-region prefix); empty skips the model check.
      * @return array{0: array<int, array{role: string, content: array<int, mixed>}>, 1: array<int, array{text?: string|cachePoint?: array}>}
      */
-    protected function applyCachePoints(array $messages, array $system): array
+    protected function applyCachePoints(array $messages, array $system, string $modelId = ''): array
     {
         if (empty($this->promptCachePoints)) {
+            return [$messages, $system];
+        }
+
+        if ($modelId !== '' && ! $this->supportsCaching($modelId)) {
             return [$messages, $system];
         }
 

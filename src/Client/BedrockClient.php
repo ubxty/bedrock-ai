@@ -51,8 +51,12 @@ class BedrockClient
         $converseClient = new ConverseClient($this->credentials, $this->maxRetries, $this->baseDelay);
 
         // Propagate prompt-cache anchors so the Converse API path can inject
-        // cachePoint blocks (v2.1.0).
+        // cachePoint blocks (v2.1.0). The cachePoint `type` and the model
+        // allowlist are also propagated (v2.1.4) so the model-aware skip
+        // applied to streaming/converse paths is honoured here too.
         $converseClient->setPromptCachePoints($this->promptCachePoints);
+        $converseClient->setPromptCachePointType($this->promptCachePointType);
+        $converseClient->setPromptCacheSupportedModels($this->cacheSupportedModels);
 
         // Deterministic Idempotency-Key over (modelId, system, user) — content
         // hash so a network blip retries as the same request (v2.1.0).

@@ -71,6 +71,7 @@ class BedrockManager extends AbstractAiManager
         $client->setModelsCacheTtl($this->config['cache']['models_ttl'] ?? 3600);
         $client->setPromptCachePoints($this->promptCachePoints());
         $client->setPromptCachePointType($this->promptCachePointType());
+        $client->setPromptCacheSupportedModels($this->cacheSupportedModels());
 
         $this->clients[$connection] = $client;
 
@@ -99,6 +100,7 @@ class BedrockManager extends AbstractAiManager
         );
         $client->setPromptCachePoints($this->promptCachePoints());
         $client->setPromptCachePointType($this->promptCachePointType());
+        $client->setPromptCacheSupportedModels($this->cacheSupportedModels());
 
         return $client;
     }
@@ -126,6 +128,7 @@ class BedrockManager extends AbstractAiManager
         );
         $client->setPromptCachePoints($this->promptCachePoints());
         $client->setPromptCachePointType($this->promptCachePointType());
+        $client->setPromptCacheSupportedModels($this->cacheSupportedModels());
 
         return $client;
     }
@@ -500,6 +503,29 @@ class BedrockManager extends AbstractAiManager
     protected function promptCachePoints(): array
     {
         $configured = $this->config['prompt_caching']['points'] ?? [];
+
+        if (! is_array($configured)) {
+            return [];
+        }
+
+        return array_values(array_map('strval', $configured));
+    }
+
+    /**
+     * Read the configured cache-capable model allowlist
+     * (`core-ai.bedrock.prompt_caching.supported_models`).
+     *
+     * Glob patterns are matched against the resolved model_id (with the
+     * `us.|eu.|apac.|ca.` cross-region prefix stripped) inside
+     * {@see HasRetryLogic::supportsCaching()}. Empty list = no allowlist
+     * configured = every model is eligible for cachePoint markers (the
+     * pre-v2.1.4 behaviour, kept for opt-in rollouts).
+     *
+     * @return string[]
+     */
+    protected function cacheSupportedModels(): array
+    {
+        $configured = $this->config['prompt_caching']['supported_models'] ?? [];
 
         if (! is_array($configured)) {
             return [];

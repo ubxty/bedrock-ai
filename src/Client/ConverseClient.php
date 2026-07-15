@@ -93,7 +93,8 @@ class ConverseClient
             $formattedMessages = $this->formatMessages($messages);
 
             // Inject cachePoint markers at the configured anchors (v2.1.0).
-            [$formattedMessages, $systemBlocks] = $this->applyCachePoints($formattedMessages, $systemBlocks);
+            // v2.1.4 — only emit when $resolvedModelId matches the supported-models allowlist.
+            [$formattedMessages, $systemBlocks] = $this->applyCachePoints($formattedMessages, $systemBlocks, $resolvedModelId);
 
             $params['messages'] = $formattedMessages;
 
@@ -180,7 +181,8 @@ class ConverseClient
         $formattedMessages = $this->formatMessages($messages, true);
 
         // Inject cachePoint markers at the configured anchors (v2.1.0).
-        [$formattedMessages, $systemBlocks] = $this->applyCachePoints($formattedMessages, $systemBlocks);
+        // v2.1.4 — only emit when $modelId matches the supported-models allowlist.
+        [$formattedMessages, $systemBlocks] = $this->applyCachePoints($formattedMessages, $systemBlocks, $modelId);
 
         $body = [
             'messages' => $formattedMessages,
