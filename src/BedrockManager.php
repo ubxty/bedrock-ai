@@ -510,19 +510,34 @@ class BedrockManager extends AbstractAiManager
 
     /**
      * Resolve the cachePoint `type` field for Converse-API requests.
-     * Reads `core-ai.bedrock.prompt_caching.ttl_seconds`: a positive value
-     * pins a one-hour cache window ('1h'); zero/absent keeps Bedrock's
-     * default (typically 5 min, denoted 'default').
+     * Reads `core-ai.bedrock.prompt_caching.ttl_seconds` and maps it to
+     * the documented Bedrock values:
      *
-     * Wired via Bedrock Converse API at submit time; the upstream SDK
-     * rejects unknown strings, so we clamp to the documented two.
+     *   - 0 or absent  → 'default' (Bedrock's default TTL, typically 5m)
+     *   - 0 < ttl < 5m → '5m'  (5-minute cache-point type)
+     *   - ttl >= 5m     → '1h'  (1-hour cache-point type)
+     *
+     * The AWS Bedrock Converse API only accepts these three literal
+     * strings. Any other value (including the previously buggy
+     * `> 0 → '1h'` shortcut) was either silently coerced or rejected
+     * by the upstream SDK. A `BEDROCK_PROMPT_CACHE_TTL=300` (the
+     * upstream default) used to be silently turned into a 1h cache
+     * point — pricing and invalidation semantics diverged from docs.
+     *
+     * The 5m boundary is taken from the AWS docs (5 minutes is the
+     * only shorter window they expose). Anything under 5m rounds up
+     * to the 5m type because the API has no finer granularity.
      */
     protected function promptCachePointType(): string
     {
-        $ttlSeconds = $this->config['prompt_caching']['ttl_seconds']
-            ?? (int) (env('BEDROCK_PROMPT_CACHE_TTL') ?: 0);
+        $ttlSeconds = (int) ($this->config['prompt_caching']['ttl_seconds']
+            ?? (int) (env('BEDROCK_PROMPT_CACHE_TTL') ?: 0));
 
-        return $ttlSeconds > 0 ? '1h' : 'default';
+        return match (true) {
+            $ttlSeconds <= 0                => 'default',
+            $ttlSeconds < 5 * 60            => '5m',
+            default                         => '1h',
+        };
     }
 
     /**
