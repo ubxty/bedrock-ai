@@ -70,6 +70,7 @@ class BedrockManager extends AbstractAiManager
 
         $client->setModelsCacheTtl($this->config['cache']['models_ttl'] ?? 3600);
         $client->setPromptCachePoints($this->promptCachePoints());
+        $client->setPromptCachePointType($this->promptCachePointType());
 
         $this->clients[$connection] = $client;
 
@@ -97,6 +98,7 @@ class BedrockManager extends AbstractAiManager
             $retryConfig['base_delay'] ?? 2
         );
         $client->setPromptCachePoints($this->promptCachePoints());
+        $client->setPromptCachePointType($this->promptCachePointType());
 
         return $client;
     }
@@ -123,6 +125,7 @@ class BedrockManager extends AbstractAiManager
             $this->config['defaults']['anthropic_version'] ?? 'bedrock-2023-05-31'
         );
         $client->setPromptCachePoints($this->promptCachePoints());
+        $client->setPromptCachePointType($this->promptCachePointType());
 
         return $client;
     }
@@ -486,7 +489,11 @@ class BedrockManager extends AbstractAiManager
 
     /**
      * Read the configured prompt-cache checkpoint anchors
-     * (`core-ai.bedrock.prompt_caching.points`), filtered to the supported set.
+     * (`core-ai.bedrock.prompt_caching.points`).
+     *
+     * Returns the raw configured list — filtering against the allowed set
+     * lives in {@see HasRetryLogic::setPromptCachePoints()} so adding a new
+     * strategy only requires touching the trait, not this method.
      *
      * @return string[]
      */
@@ -498,10 +505,24 @@ class BedrockManager extends AbstractAiManager
             return [];
         }
 
-        return array_values(array_filter(
-            array_map('strval', $configured),
-            fn (string $p) => in_array($p, ['system', 'last_user'], true),
-        ));
+        return array_values(array_map('strval', $configured));
+    }
+
+    /**
+     * Resolve the cachePoint `type` field for Converse-API requests.
+     * Reads `core-ai.bedrock.prompt_caching.ttl_seconds`: a positive value
+     * pins a one-hour cache window ('1h'); zero/absent keeps Bedrock's
+     * default (typically 5 min, denoted 'default').
+     *
+     * Wired via Bedrock Converse API at submit time; the upstream SDK
+     * rejects unknown strings, so we clamp to the documented two.
+     */
+    protected function promptCachePointType(): string
+    {
+        $ttlSeconds = $this->config['prompt_caching']['ttl_seconds']
+            ?? (int) (env('BEDROCK_PROMPT_CACHE_TTL') ?: 0);
+
+        return $ttlSeconds > 0 ? '1h' : 'default';
     }
 
     /**

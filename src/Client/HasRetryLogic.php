@@ -21,11 +21,30 @@ trait HasRetryLogic
 
     /**
      * Named anchors where the manager wants a `cachePoint` block injected.
-     * Currently: 'system', 'last_user'.
+     * Supported values:
+     *   - 'system'              after the system prompt blocks
+     *   - 'last_user'           after the last user message blocks
+     *   - 'last_assistant'      after the last assistant message blocks
+     *   - 'every_n_assistant:N' after every Nth assistant message (N >= 1)
+     *
+     * Bedrock accepts up to 4 cachePoints per Converse call — applyCachePoints()
+     * clamps the total emitted anchors to that ceiling.
      *
      * @var string[]
      */
     protected array $promptCachePoints = [];
+
+    /**
+     * Bedrock cachePoint `type` value. 'default' keeps the model-default TTL;
+     * '1h' pins a one-hour cache window (matches BEDROCK_PROMPT_CACHE_TTL).
+     */
+    protected string $promptCachePointType = 'default';
+
+    /**
+     * Bedrock hard cap on cachePoints per Converse call.
+     * Excess configured anchors are dropped (last-wins ordering).
+     */
+    protected const MAX_CACHE_POINTS = 4;
 
     /**
      * Optional explicit Retry-After (seconds) set by the HTTP path after parsing
@@ -36,15 +55,61 @@ trait HasRetryLogic
     /**
      * Set the prompt-cache checkpoint anchors. Pass-through from
      * `core-ai.bedrock.prompt_caching.points`.
+     *
+     * Accepts the static anchors ('system', 'last_user', 'last_assistant')
+     * and the parametric 'every_n_assistant:N' strategy. Unknown strings
+     * are silently dropped so a stray env value cannot disable caching.
      */
     public function setPromptCachePoints(array $points): static
     {
         $this->promptCachePoints = array_values(array_filter(
             array_map('strval', $points),
-            fn (string $p) => in_array($p, ['system', 'last_user'], true),
+            fn (string $p) => $this->isValidCachePointStrategy($p),
         ));
 
         return $this;
+    }
+
+    /**
+     * Set the cachePoint `type` block ('default' or '1h'). Pass-through from
+     * `core-ai.bedrock.prompt_caching.ttl_seconds` (>0 => '1h', else 'default').
+     */
+    public function setPromptCachePointType(string $type): static
+    {
+        $allowed = ['default', '1h'];
+        $this->promptCachePointType = in_array($type, $allowed, true) ? $type : 'default';
+
+        return $this;
+    }
+
+    /**
+     * Validate a configured cache-point strategy string.
+     */
+    protected function isValidCachePointStrategy(string $point): bool
+    {
+        if (in_array($point, ['system', 'last_user', 'last_assistant'], true)) {
+            return true;
+        }
+
+        // 'every_n_assistant:N' where N is a positive integer.
+        if (preg_match('/^every_n_assistant:([1-9]\d*)$/', $point, $m) === 1) {
+            return (int) $m[1] >= 1;
+        }
+
+        return false;
+    }
+
+    /**
+     * Parse the trailing integer from an 'every_n_assistant:N' strategy.
+     * Returns null for non-matching strategy names.
+     */
+    protected function everyNAssistantInterval(string $strategy): ?int
+    {
+        if (preg_match('/^every_n_assistant:([1-9]\d*)$/', $strategy, $m) === 1) {
+            return (int) $m[1];
+        }
+
+        return null;
     }
 
     /**
@@ -237,8 +302,17 @@ trait HasRetryLogic
     }
 
     /**
-     * Inject `cachePoint: { type: 'default' }` blocks into the Converse body at
-     * the configured named anchors. Empty $this->promptCachePoints is a no-op.
+     * Inject `cachePoint` blocks into the Converse body at the configured named
+     * anchors. Empty $this->promptCachePoints is a no-op.
+     *
+     * Anchors are emitted in conversation order (system first, then by message
+     * index) so a multi-turn chat reuses progressively longer cached prefixes
+     * — single biggest input-cost saving for chat workloads.
+     *
+     * The Bedrock Converse API allows up to 4 cachePoints per call; the total
+     * number of anchors actually written is clamped to {@see MAX_CACHE_POINTS}.
+     * When the ceiling is hit, earlier anchors win (system > last_user >
+     * last_assistant > every_n_assistant).
      *
      * @param  array<int, array{role: string, content: array<int, mixed>}>  $messages
      * @param  array<int, array{text?: string}>  $system
@@ -250,11 +324,15 @@ trait HasRetryLogic
             return [$messages, $system];
         }
 
-        if (in_array('system', $this->promptCachePoints, true) && ! empty($system)) {
-            $system[] = ['cachePoint' => ['type' => 'default']];
+        $type = ['type' => $this->promptCachePointType];
+        $remaining = self::MAX_CACHE_POINTS;
+
+        if ($remaining > 0 && in_array('system', $this->promptCachePoints, true) && ! empty($system)) {
+            $system[] = ['cachePoint' => $type];
+            $remaining--;
         }
 
-        if (in_array('last_user', $this->promptCachePoints, true) && ! empty($messages)) {
+        if ($remaining > 0 && in_array('last_user', $this->promptCachePoints, true) && ! empty($messages)) {
             // Find the last message with role 'user' and append the checkpoint to its content.
             for ($i = count($messages) - 1; $i >= 0; $i--) {
                 if (($messages[$i]['role'] ?? null) === 'user') {
@@ -262,8 +340,73 @@ trait HasRetryLogic
                         // Plain string content: convert to a block array.
                         $messages[$i]['content'] = [['text' => (string) $messages[$i]['content']]];
                     }
-                    $messages[$i]['content'][] = ['cachePoint' => ['type' => 'default']];
+                    $messages[$i]['content'][] = ['cachePoint' => $type];
+                    $remaining--;
                     break;
+                }
+            }
+        }
+
+        if ($remaining > 0 && in_array('last_assistant', $this->promptCachePoints, true) && ! empty($messages)) {
+            for ($i = count($messages) - 1; $i >= 0; $i--) {
+                if (($messages[$i]['role'] ?? null) === 'assistant') {
+                    if (! is_array($messages[$i]['content'])) {
+                        $messages[$i]['content'] = [['text' => (string) $messages[$i]['content']]];
+                    }
+                    $messages[$i]['content'][] = ['cachePoint' => $type];
+                    $remaining--;
+                    break;
+                }
+            }
+        }
+
+        if ($remaining > 0 && ! empty($messages)) {
+            // Pre-compute every_n_assistant:N intervals (one per N), then emit
+            // a cachePoint at each Nth assistant message — walking from the
+            // end backwards so we always fill with the most-recent eligible
+            // anchors first (best cache-hit reuse for chat workloads).
+            $intervals = [];
+            foreach ($this->promptCachePoints as $strategy) {
+                $n = $this->everyNAssistantInterval($strategy);
+                if ($n !== null) {
+                    $intervals[$n] = true;
+                }
+            }
+            $intervals = array_keys($intervals);
+
+            if (! empty($intervals)) {
+                $assistantIndexes = [];
+                foreach ($messages as $i => $msg) {
+                    if (($msg['role'] ?? null) === 'assistant') {
+                        $assistantIndexes[] = $i;
+                    }
+                }
+
+                // For each interval N, pick the (assistantCount mod N == 0)
+                // assistant indexes walking from the newest backwards. Emit at
+                // most one anchor per N until the cap is hit.
+                foreach ($intervals as $n) {
+                    if ($remaining <= 0) {
+                        break;
+                    }
+                    $count = 0;
+                    for ($k = count($assistantIndexes) - 1; $k >= 0; $k--) {
+                        $count++;
+                        if ($count % $n !== 0) {
+                            continue;
+                        }
+                        $idx = $assistantIndexes[$k];
+                        if (! is_array($messages[$idx]['content'])) {
+                            $messages[$idx]['content'] = [['text' => (string) $messages[$idx]['content']]];
+                        }
+                        // cachePoint must remain the LAST element of
+                        // messages[i].content per the Bedrock Converse spec.
+                        $messages[$idx]['content'][] = ['cachePoint' => $type];
+                        $remaining--;
+                        if ($remaining <= 0) {
+                            break;
+                        }
+                    }
                 }
             }
         }
