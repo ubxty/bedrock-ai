@@ -530,14 +530,62 @@ class BedrockManager extends AbstractAiManager
      */
     protected function promptCachePointType(): string
     {
+        $defaultModel = (string) ($this->config['defaults']['model'] ?? '');
+
+        return $this->resolveCachePointType($defaultModel);
+    }
+
+    /**
+     * Resolve the cachePoint `type` for a given model. Reads
+     * `core-ai.bedrock.prompt_caching.ttl_seconds` and maps it to the
+     * documented Bedrock values:
+     *
+     *   - 0 or absent  → 'default' (Bedrock's default TTL, typically 5m)
+     *   - 0 < ttl < 5m → '5m'  (5-minute cache-point type)
+     *   - ttl >= 5m     → '1h'  (1-hour cache-point type)
+     *
+     * The AWS Bedrock Converse API only accepts these three literal
+     * strings. Any other value (including the previously buggy
+     * `> 0 → '1h'` shortcut) was either silently coerced or rejected
+     * by the upstream SDK. A `BEDROCK_PROMPT_CACHE_TTL=300` (the
+     * upstream default) used to be silently turned into a 1h cache
+     * point — pricing and invalidation semantics diverged from docs.
+     *
+     * Not every model accepts '5m' or '1h' — the Converse API returns
+     * 400 for Amazon Nova and Claude 3 / 3.5 Haiku when given anything
+     * other than 'default'. We only allow the longer TTL types for
+     * models documented to support them, falling back to 'default'
+     * otherwise.
+     *
+     * The 5m boundary is taken from the AWS docs (5 minutes is the
+     * only shorter window they expose). Anything under 5m rounds up
+     * to the 5m type because the API has no finer granularity.
+     */
+    protected function resolveCachePointType(string $modelId): string
+    {
         $ttlSeconds = (int) ($this->config['prompt_caching']['ttl_seconds']
             ?? (int) (env('BEDROCK_PROMPT_CACHE_TTL') ?: 0));
 
-        return match (true) {
+        $desired = match (true) {
             $ttlSeconds <= 0                => 'default',
             $ttlSeconds < 5 * 60            => '5m',
             default                         => '1h',
         };
+
+        if ($desired === 'default') {
+            return 'default';
+        }
+
+        // Conservative allowlist of models that accept '5m' / '1h'
+        // cachePoint types per current AWS docs. Unknown models fall
+        // back to 'default' so a misconfigured TTL can't 400 the call.
+        $supportsExtended = str_contains($modelId, 'claude-3-5-sonnet')
+            || str_contains($modelId, 'claude-3-opus')
+            || str_contains($modelId, 'claude-sonnet-4')
+            || str_contains($modelId, 'claude-opus-4')
+            || str_contains($modelId, 'claude-haiku-4');
+
+        return $supportsExtended ? $desired : 'default';
     }
 
     /**
