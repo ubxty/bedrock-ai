@@ -467,7 +467,7 @@ class ChatCommand extends Command
     protected function smartPasteHeader(): string
     {
         return sprintf(
-            '<fg=green>On</> <fg=gray>(> %s / > %d lines → /tmp)</>',
+            '<fg=green>On</> <fg=gray>(> %s / > %d lines -> /tmp)</>',
             $this->formatBytes($this->pasteSpoolByteThreshold),
             $this->pasteSpoolLineThreshold
         );
