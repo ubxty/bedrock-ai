@@ -36,7 +36,7 @@ class BedrockClient
      * Invoke a Bedrock model with automatic key rotation and retry.
      * Internally delegates to the Converse API for provider-agnostic support.
      *
-     * @return array{response: string, input_tokens: int, output_tokens: int, total_tokens: int, cost: float, latency_ms: int, status: string, key_used: string, model_id: string}
+     * @return array{response: string, input_tokens: int, output_tokens: int, total_tokens: int, cache_read_input_tokens: int, cache_write_input_tokens: int, cost: float, latency_ms: int, status: string, key_used: string, model_id: string}
      */
     public function invoke(
         string $modelId,
@@ -74,6 +74,8 @@ class BedrockClient
             'input_tokens' => $result['input_tokens'],
             'output_tokens' => $result['output_tokens'],
             'total_tokens' => $result['total_tokens'],
+            'cache_read_input_tokens' => (int) ($result['cache_read_input_tokens'] ?? 0),
+            'cache_write_input_tokens' => (int) ($result['cache_write_input_tokens'] ?? 0),
             'cost' => $cost,
             'latency_ms' => (int) ((microtime(true) - $startTime) * 1000),
             'status' => 'success',
