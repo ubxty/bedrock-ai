@@ -4,9 +4,12 @@ namespace Ubxty\BedrockAi\Commands;
 
 use Illuminate\Console\Command;
 use Ubxty\BedrockAi\BedrockManager;
+use Ubxty\CoreAi\Commands\Concerns\PasteSpooler;
 
 class ChatCommand extends Command
 {
+    use PasteSpooler;
+
     protected $signature = 'bedrock:chat
                             {model? : Model ID or alias to chat with}
                             {--connection= : Connection name}
@@ -127,7 +130,8 @@ class ChatCommand extends Command
                 $this->totalCacheWriteTokens = 0;
                 $this->totalCost = 0;
                 $this->messageCount = 0;
-                $this->info('  Conversation reset.');
+                $removed = $this->cleanupSpooledPastes();
+                $this->info('  Conversation reset.'.($removed > 0 ? " ({$removed} paste file(s) removed.)" : ''));
 
                 continue;
             }
@@ -209,13 +213,29 @@ class ChatCommand extends Command
                 continue;
             }
 
-            $conversation->user($input);
+            $messageToModel = $input;
+            $spooledInfo = null;
+
+            if ($this->shouldSpoolPaste($input)) {
+                $spooledInfo = $this->spoolPaste($input);
+                $messageToModel = $spooledInfo['reference'];
+
+                $this->newLine();
+                $this->line(sprintf(
+                    '  <fg=gray>You: (pasted %s, %d lines → <fg=cyan>%s</>)</>',
+                    $this->formatBytes($spooledInfo['bytes']),
+                    $spooledInfo['lines'],
+                    $spooledInfo['path']
+                ));
+            }
+
+            $conversation->user($messageToModel);
 
             try {
                 $this->line('');
                 $this->line('  <fg=cyan>Assistant</>');
 
-                if ($useStreaming && ! $manager->client($connection)->getCredentialManager()->isBearerMode()) {
+                if ($useStreaming && ! $manager->isBearerMode($connection)) {
                     $result = $this->sendStreaming($conversation);
                 } else {
                     $result = $this->sendBlocking($conversation);
@@ -363,7 +383,7 @@ class ChatCommand extends Command
             $this->line('');
             $this->line('  <fg=cyan>Assistant</>');
 
-            if ($useStreaming && ! $manager->client($connection)->getCredentialManager()->isBearerMode()) {
+            if ($useStreaming && ! $manager->isBearerMode($connection)) {
                 $result = $this->sendStreaming($conversation);
             } else {
                 $result = $this->sendBlocking($conversation);
@@ -471,6 +491,9 @@ class ChatCommand extends Command
         $this->line('  <fg=yellow>/model <id></>     Switch to a different model');
         $this->line('  <fg=yellow>/temp <0-1></>     Change temperature');
         $this->line('  <fg=yellow>/cache on|off</>  Toggle prompt caching for this session');
+        $this->line('');
+        $this->line('  <fg=gray>Pastes over 2 KB or 50 lines are auto-spooled to /tmp and the</>');
+        $this->line('  <fg=gray>model sees a path reference. /reset cleans them up.</>');
         $this->line('  <fg=yellow>/image <path> [prompt]</>');
         $this->line('                    Analyse an image (jpg/png/gif/webp)');
         $this->line('  <fg=yellow>/doc <path> [prompt]</>');
