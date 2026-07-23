@@ -2,8 +2,8 @@
 
 namespace Ubxty\BedrockAi\Client;
 
-use Ubxty\BedrockAi\Exceptions\ConfigurationException;
 use Ubxty\CoreAi\Client\AbstractCredentialManager;
+use Ubxty\CoreAi\Exceptions\ConfigurationException;
 
 /**
  * AWS Bedrock credential manager with multi-key rotation and bearer/IAM

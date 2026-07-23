@@ -6,14 +6,12 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Ubxty\BedrockAi\Billing\CostExplorerService;
 use Ubxty\BedrockAi\Client\BedrockClient;
-use Ubxty\BedrockAi\Client\ConverseClient;
 use Ubxty\BedrockAi\Client\CredentialManager;
-use Ubxty\BedrockAi\Client\StreamingClient;
 use Ubxty\BedrockAi\Events\BedrockInvoked;
 use Ubxty\BedrockAi\Exceptions\BedrockException;
-use Ubxty\BedrockAi\Exceptions\ConfigurationException;
 use Ubxty\BedrockAi\Pricing\PricingService;
 use Ubxty\BedrockAi\Usage\UsageTracker;
+use Ubxty\CoreAi\Exceptions\ConfigurationException;
 use Ubxty\CoreAi\Manager\AbstractAiManager;
 
 class BedrockManager extends AbstractAiManager
@@ -65,7 +63,7 @@ class BedrockManager extends AbstractAiManager
             new CredentialManager($keys),
             $retryConfig['max_retries'] ?? 3,
             $retryConfig['base_delay'] ?? 2,
-            $this->config['defaults']['anthropic_version'] ?? 'bedrock-2023-05-31'
+            $this->config['cache']['models_ttl'] ?? 3600,
         );
 
         $client->setModelsCacheTtl($this->config['cache']['models_ttl'] ?? 3600);
@@ -80,80 +78,50 @@ class BedrockManager extends AbstractAiManager
 
     /**
      * Get a Converse API client for the given connection.
+     *
+     * v2.2: ConverseClient and StreamingClient have been merged into
+     * BedrockClient (which extends core-ai's Standards\Converse\ConverseClient).
+     * Both `converseClient()` and `streamingClient()` return the same client
+     * — BC surface preserved for callers using either factory.
      */
-    public function converseClient(?string $connection = null): ConverseClient
+    public function converseClient(?string $connection = null): BedrockClient
     {
-        $connection ??= $this->config['default'] ?? 'default';
-        $connectionConfig = $this->config['connections'][$connection] ?? null;
-
-        if (! $connectionConfig) {
-            throw new ConfigurationException("Bedrock connection [{$connection}] is not configured.");
-        }
-
-        $keys = $connectionConfig['keys'] ?? [];
-        $retryConfig = $this->config['retry'] ?? [];
-
-        $client = new ConverseClient(
-            new CredentialManager($keys),
-            $retryConfig['max_retries'] ?? 3,
-            $retryConfig['base_delay'] ?? 2
-        );
-        $client->setPromptCachePoints($this->promptCachePoints());
-        $client->setPromptCachePointType($this->promptCachePointType());
-        $client->setPromptCacheSupportedModels($this->cacheSupportedModels());
-
-        return $client;
+        return $this->client($connection);
     }
 
     /**
      * Get a streaming client for the given connection.
+     *
+     * v2.2: now an alias for `client()` — BedrockClient implements
+     * converseStream() directly (via inheritance from
+     * core-ai/Standards/Converse/ConverseClient). BC surface preserved.
      */
-    public function streamingClient(?string $connection = null): StreamingClient
+    public function streamingClient(?string $connection = null): BedrockClient
     {
-        $connection ??= $this->config['default'] ?? 'default';
-        $connectionConfig = $this->config['connections'][$connection] ?? null;
-
-        if (! $connectionConfig) {
-            throw new ConfigurationException("Bedrock connection [{$connection}] is not configured.");
-        }
-
-        $keys = $connectionConfig['keys'] ?? [];
-        $retryConfig = $this->config['retry'] ?? [];
-
-        $client = new StreamingClient(
-            new CredentialManager($keys),
-            $retryConfig['max_retries'] ?? 3,
-            $retryConfig['base_delay'] ?? 2,
-            $this->config['defaults']['anthropic_version'] ?? 'bedrock-2023-05-31'
-        );
-        $client->setPromptCachePoints($this->promptCachePoints());
-        $client->setPromptCachePointType($this->promptCachePointType());
-        $client->setPromptCacheSupportedModels($this->cacheSupportedModels());
-
-        return $client;
+        return $this->client($connection);
     }
 
     /**
-     * Build a one-off ConverseClient with the package's cachePoint config
+     * Build a one-off BedrockClient with the package's cachePoint config
      * overridden for a single call. Used by `performConverse()` when a
      * ConversationBuilder has set a per-session cache-points override.
      */
-    protected function converseClientWithCacheOverride(?string $connection, array $cachePointsOverride): ConverseClient
+    protected function converseClientWithCacheOverride(?string $connection, array $cachePointsOverride): BedrockClient
     {
-        $client = $this->converseClient($connection);
+        $client = $this->client($connection);
         $client->setPromptCachePoints($cachePointsOverride);
 
         return $client;
     }
 
     /**
-     * Build a one-off StreamingClient with the package's cachePoint config
+     * Build a one-off BedrockClient with the package's cachePoint config
      * overridden for a single call. Used by `performConverseStream()` when
      * a ConversationBuilder has set a per-session cache-points override.
      */
-    protected function streamingClientWithCacheOverride(?string $connection, array $cachePointsOverride): StreamingClient
+    protected function streamingClientWithCacheOverride(?string $connection, array $cachePointsOverride): BedrockClient
     {
-        $client = $this->streamingClient($connection);
+        $client = $this->client($connection);
         $client->setPromptCachePoints($cachePointsOverride);
 
         return $client;
@@ -184,7 +152,14 @@ class BedrockManager extends AbstractAiManager
 
         $modelId = $this->resolveAlias($modelId);
 
-        $result = $this->streamingClient($connection)->stream($modelId, $systemPrompt, $userMessage, $onChunk, $maxTokens, $temperature);
+        $result = $this->client($connection)->converseStream(
+            $modelId,
+            [['role' => 'user', 'content' => $userMessage]],
+            $onChunk,
+            $systemPrompt,
+            $maxTokens,
+            $temperature,
+        );
 
         $cost = $this->calculateCost($result['input_tokens'] ?? 0, $result['output_tokens'] ?? 0, $pricing);
         $result['cost'] = $cost;
@@ -318,79 +293,13 @@ class BedrockManager extends AbstractAiManager
         return $this->client($connection)->fetchModels();
     }
 
-    /**
-     * Sync models for the given connection.
-     *
-     * Since 1.1.0, the catalogue is config-driven (see config/bedrock.php
-     * `models` block). This method returns the count of models configured
-     * for the connection. {@see AbstractAiManager::getModelsGrouped()}
-     * falls back to a live {@see fetchModels()} call when config is empty.
-     */
-    public function syncModels(?string $connection = null): int
-    {
-        $connection ??= $this->config['default'] ?? 'default';
-
-        return count($this->getConfiguredModels($connection));
-    }
-
-    /**
-     * Read configured models into the normalised shape
-     * AbstractAiManager::getModelsGrouped() expects. Empty return
-     * signals parent to fall back to a live fetchModels() call.
-     */
-    protected function fetchModelsForGrouping(?string $connection): array
-    {
-        $models = $this->getConfiguredModels($connection ?? $this->config['default'] ?? 'default');
-
-        return array_values(array_map(
-            fn (string $modelId, array $spec): array => [
-                'model_id'         => $modelId,
-                'name'             => $spec['name'] ?? $modelId,
-                'provider'         => $spec['provider'] ?? 'Other',
-                'context_window'   => (int) ($spec['context_window'] ?? 0),
-                'max_tokens'       => (int) ($spec['max_tokens'] ?? 0),
-                'capabilities'     => (array) ($spec['capabilities'] ?? []),
-                'input_modalities' => (array) ($spec['input_modalities'] ?? ['text']),
-                'is_active'        => (bool) ($spec['is_active'] ?? true),
-            ],
-            array_keys($models),
-            array_values($models),
-        ));
-    }
-
-    /**
-     * Read models for a connection from the config `models` block.
-     *
-     * Supports two shapes:
-     *   1. Per-connection: ['default' => ['anthropic.…' => ['provider' => '…']]]
-     *   2. Flat-indexed-by-model_id (model IDs are globally unique across Bedrock
-     *      regions): ['anthropic.…' => ['provider' => '…']]
-     *
-     * In the flat shape, an entry with `'connection' => 'other'` is filtered
-     * out when querying for `'default'`.
-     *
-     * @return array<string, array<string, mixed>>
-     */
-    protected function getConfiguredModels(string $connection): array
-    {
-        $all = $this->config['models'] ?? [];
-
-        if (! is_array($all)) {
-            return [];
-        }
-
-        // Per-connection shape: top-level key is the connection name.
-        if (isset($all[$connection]) && is_array($all[$connection])) {
-            return $all[$connection];
-        }
-
-        // Flat shape: filter entries whose explicit 'connection' pin does not match.
-        return array_filter(
-            $all,
-            fn ($spec) => is_array($spec)
-                && (! isset($spec['connection']) || $spec['connection'] === $connection),
-        );
-    }
+    // ─────────────────────────────────────────────────────────
+    //  syncModels() / fetchModelsForGrouping() / getConfiguredModels()
+    //  are inherited from AbstractAiManager since the v2.2 platform
+    //  refactor. Bedrock keeps its own isConfigured() override below
+    //  (IAM-vs-bearer branching + ctor try/catch) and supportsStreaming()
+    //  override (IAM bearer mode returns false).
+    // ─────────────────────────────────────────────────────────
 
     /**
      * Configuration check delegates normalization to CredentialManager
@@ -426,12 +335,12 @@ class BedrockManager extends AbstractAiManager
 
     public function supportsStreaming(?string $connection = null): bool
     {
+        // Bedrock streaming is IAM-only. Bearer mode throws ConfigurationException
+        // at runtime — surface that honestly here so callers can switch mode.
+        if ($this->client($connection)->getCredentialManager()->isBearerMode()) {
+            return false;
+        }
         return true;
-    }
-
-    public function getCredentialInfo(?string $connection = null): array
-    {
-        return $this->client($connection)->getCredentialManager()->list();
     }
 
     public function platformName(): string
@@ -439,19 +348,14 @@ class BedrockManager extends AbstractAiManager
         return 'AWS Bedrock';
     }
 
+    protected function providerDefault(): string
+    {
+        return 'Other';
+    }
+
     // ─────────────────────────────────────────────────────────
     //  Template-method overrides (BC + platform-specific)
     // ─────────────────────────────────────────────────────────
-
-    /**
-     * Cache key prefix is locked to "bedrock_ai" so that in-flight
-     * daily/monthly cost counters and the cost-lock key survive
-     * the migration to AbstractAiManager.
-     */
-    protected function cachePrefix(): string
-    {
-        return 'bedrock_ai';
-    }
 
     /**
      * Fire a BedrockInvoked event instead of the parent's AiInvoked,
