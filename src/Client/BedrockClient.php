@@ -45,6 +45,45 @@ class BedrockClient extends ConverseClient
     }
 
     // ─────────────────────────────────────────────────────────
+    //  BedrockManager state push — v2.3.1 compat shim
+    //
+    //  BedrockManager::client() (src/BedrockManager.php) calls
+    //  setPromptCachePoints(), setPromptCachePointType() and
+    //  setPromptCacheSupportedModels() after constructing the client.
+    //  Declaring the storage + setters here keeps the construction chain
+    //  working. Parent ConverseClient already reads $promptCachePoints
+    //  dynamically via the HasConverseFormatting trait; the other two
+    //  are kept for symmetry and a future trait-based wire-up.
+    // ─────────────────────────────────────────────────────────
+
+    /** @var string[] Configured cachePoint message anchors. */
+    protected array $promptCachePoints = [];
+
+    /** @var string One of 'default' | '5m' | '1h' — Bedrock cachePoint `type` field. */
+    protected string $promptCachePointType = 'default';
+
+    /** @var string[] Allowlist of model IDs / glob patterns eligible for cachePoint markers. */
+    protected array $promptCacheSupportedModels = [];
+
+    public function setPromptCachePoints(array $points): static
+    {
+        $this->promptCachePoints = array_values(array_map('strval', $points));
+        return $this;
+    }
+
+    public function setPromptCachePointType(string $type): static
+    {
+        $this->promptCachePointType = $type;
+        return $this;
+    }
+
+    public function setPromptCacheSupportedModels(array $models): static
+    {
+        $this->promptCacheSupportedModels = array_values(array_map('strval', $models));
+        return $this;
+    }
+
+    // ─────────────────────────────────────────────────────────
     //  Legacy v2.1.x envelope — BC surface for BedrockManager
     // ─────────────────────────────────────────────────────────
 
@@ -65,7 +104,7 @@ class BedrockClient extends ConverseClient
     ): array {
         $start = microtime(true);
 
-        $result = $this->converse(
+        $result = $this->converseWithModel(
             $modelId,
             [['role' => 'user', 'content' => $userMessage]],
             $systemPrompt,
@@ -94,10 +133,15 @@ class BedrockClient extends ConverseClient
      * Legacy v2.1.x converse envelope. Threads modelId into parent
      * AbstractLLMClient::converse() via the `currentModelId` slot.
      *
+     * Renamed from `converse()` in v2.3.1 — the v2.3 parent signature
+     * dropped `$modelId` and returns LLMResult, so an override of the
+     * same name with the v2.1.x shape is incompatible. Callers wanting
+     * the array envelope use this method directly.
+     *
      * @param  array<int, array{role: string, content: string|array}>  $messages
      * @return array{response: string, input_tokens: int, output_tokens: int, total_tokens: int, cache_read_input_tokens: int, cache_write_input_tokens: int, stop_reason: string, latency_ms: int, model_id: string, key_used: string}
      */
-    public function converse(
+    public function converseWithModel(
         string $modelId,
         array $messages,
         string $systemPrompt = '',
@@ -138,11 +182,15 @@ class BedrockClient extends ConverseClient
     /**
      * Public alias for the legacy v2.1.x converse — same envelope.
      *
+     * Renamed from `converseStream()` in v2.3.1 for the same reason as
+     * {@see converseWithModel()}: the v2.3 parent signature is
+     * incompatible with the v2.1.x BC shape.
+     *
      * @param  array<int, array{role: string, content: string|array}>  $messages
      * @param  callable(string $chunk): void  $onChunk
      * @return array{response: string, input_tokens: int, output_tokens: int, total_tokens: int, cache_read_input_tokens: int, cache_write_input_tokens: int, stop_reason: string, latency_ms: int, model_id: string, key_used: string}
      */
-    public function converseStream(
+    public function converseStreamWithModel(
         string $modelId,
         array $messages,
         callable $onChunk,

@@ -152,7 +152,7 @@ class BedrockManager extends AbstractAiManager
 
         $modelId = $this->resolveAlias($modelId);
 
-        $result = $this->client($connection)->converseStream(
+        $result = $this->client($connection)->converseStreamWithModel(
             $modelId,
             [['role' => 'user', 'content' => $userMessage]],
             $onChunk,
@@ -213,7 +213,7 @@ class BedrockManager extends AbstractAiManager
             ? $this->converseClientWithCacheOverride($connection, $cachePointsOverride)
             : $this->converseClient($connection);
 
-        return $client->converse($modelId, $messages, $systemPrompt, $maxTokens, $temperature);
+        return $client->converseWithModel($modelId, $messages, $systemPrompt, $maxTokens, $temperature);
     }
 
     /**
@@ -271,7 +271,7 @@ class BedrockManager extends AbstractAiManager
             ? $this->streamingClientWithCacheOverride($connection, $cachePointsOverride)
             : $this->streamingClient($connection);
 
-        return $client->converseStream($modelId, $messages, $onChunk, $systemPrompt, $maxTokens, $temperature);
+        return $client->converseStreamWithModel($modelId, $messages, $onChunk, $systemPrompt, $maxTokens, $temperature);
     }
 
     // ─────────────────────────────────────────────────────────
